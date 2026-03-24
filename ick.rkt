@@ -8,9 +8,9 @@ label : NUMBER
 
 stmt : polite? op
 
-polite : "DO"
-       | "PLEASE"
-       | "PLEASE" "DO"
+polite : DO
+       | PLEASE DO
+       | PLEASE
 
 op : assign
    | next
@@ -18,13 +18,25 @@ op : assign
    | readout
    | giveup
 
-assign : "ASSIGN" var expr
-next : "NEXT" NUMBER
-comefrom : "COME" "FROM" NUMBER
-readout : "READ" "OUT" var
-giveup : "GIVE" "UP"
+assign : var GETS expr
+next : NEXT NUMBER
+comefrom : COME FROM NUMBER
+readout : READ OUT expr
+giveup : GIVE UP
 
-var : VAR
+ident : NUMBER
+      | ID
 
-expr : var
+var : DOT ident
+    | COLON ident
+    | STAR ident
+    | var SUB expr
+
+expr : UNARY_AND expr
+     | UNARY_OR expr
+     | UNARY_XOR expr
+     | expr MINGLE expr
+     | expr SELECT expr
+     | var
      | NUMBER
+     | MESH NUMBER
