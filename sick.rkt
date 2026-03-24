@@ -109,13 +109,13 @@
 
      ;; 2. Dynamically extract all variables (.I, :V, etc.)
      (define all-vars
-        (remove-duplicates
-         (filter (lambda (sym)
-                   (and (symbol? sym)
-                        (let ([str (symbol->string sym)])
-                          ;; Check for scalar or array prefixes
-                          (member (substring str 0 1) '("." ":" "*")))))
-                 (flatten (map syntax->datum ops)))))
+       (remove-duplicates
+        (filter (lambda (sym)
+                  (and (symbol? sym)
+                       (let ([str (symbol->string sym)])
+                         ;; Check for scalar or array prefixes
+                         (member (substring str 0 1) '("." ":" "*")))))
+                (flatten (map syntax->datum ops)))))
 
      ;; Generate (define var 0) and (define var-stack '()) for each
      (define var-definitions
@@ -129,89 +129,89 @@
             all-vars))
 
      ;; 3. Generate Case Clauses
-       (define case-clauses
-         (let loop ([lbls lines] [operations ops])
-           (cond
-             [(null? lbls) '()]
-             [else
-              (define current-lbl (car lbls))
-              (define next-lbl (if (null? (cdr lbls)) #f (cadr lbls)))
+     (define case-clauses
+       (let loop ([lbls lines] [operations ops])
+         (cond
+           [(null? lbls) '()]
+           [else
+            (define current-lbl (car lbls))
+            (define next-lbl (if (null? (cdr lbls)) #f (cadr lbls)))
 
-              (define compiled-op
-                (syntax-parse (car operations)
+            (define compiled-op
+              (syntax-parse (car operations)
 
-                  [((~datum assign) ((~datum sub) arr idx) val)
-                   #`(vector-set! arr (sub1 idx) val)]
+                [((~datum assign) ((~datum sub) arr idx) val)
+                 #`(vector-set! arr (sub1 idx) val)]
 
-                  [((~datum assign) var val)
-                   (let ([var-str (symbol->string (syntax-e #'var))])
-                     (cond
-                       ;; Array Dimensioning (if var starts with , or *)
-                       [(string-prefix? var-str "*")
-                        #`(set! var (make-vector val 0))]
-                       ;; Standard Scalar
-                       [else #`(set! var val)]))]
+                [((~datum assign) var val)
+                 (let ([var-str (symbol->string (syntax-e #'var))])
+                   (cond
+                     ;; Array Dimensioning (if var starts with , or *)
+                     [(string-prefix? var-str "*")
+                      #`(set! var (make-vector val 0))]
+                     ;; Standard Scalar
+                     [else #`(set! var val)]))]
 
-                  [((~datum stash) var ...)
-                   #`(begin
-                       #,@(map (lambda (v)
-                                 (let ([vstack (datum->syntax stx (string->symbol (string-append (symbol->string (syntax-e v)) "-stack")))])
-                                   #`(set! #,vstack (cons #,v #,vstack))))
-                               (syntax->list #'(var ...))))]
-                  [((~datum retrieve) var ...)
-                   #`(begin
-                       #,@(map (lambda (v)
-                                 (let ([vstack (datum->syntax stx (string->symbol (string-append (symbol->string (syntax-e v)) "-stack")))])
-                                   #`(begin
-                                       (set! #,v (car #,vstack))
-                                       (set! #,vstack (cdr #,vstack)))))
-                               (syntax->list #'(var ...))))]
+                [((~datum stash) var ...)
+                 #`(begin
+                     #,@(map (lambda (v)
+                               (let ([vstack (datum->syntax stx (string->symbol (string-append (symbol->string (syntax-e v)) "-stack")))])
+                                 #`(set! #,vstack (cons #,v #,vstack))))
+                             (syntax->list #'(var ...))))]
+                [((~datum retrieve) var ...)
+                 #`(begin
+                     #,@(map (lambda (v)
+                               (let ([vstack (datum->syntax stx (string->symbol (string-append (symbol->string (syntax-e v)) "-stack")))])
+                                 #`(begin
+                                     (set! #,v (car #,vstack))
+                                     (set! #,vstack (cdr #,vstack)))))
+                             (syntax->list #'(var ...))))]
 
-                  [((~datum read-out) var)
-                   #`(let ([v var])
-                       (if (vector? v)
-                           (set! output-acc (append (reverse (vector->list v)) output-acc))
-                           (set! output-acc (cons v output-acc))))]
+                [((~datum read-out) var)
+                 #`(let ([v var])
+                     (if (vector? v)
+                         (set! output-acc (append (reverse (vector->list v)) output-acc))
+                         (set! output-acc (cons v output-acc))))]
 
-                  [((~datum come-from) target)
-                   #`(void)]
-                  [((~datum next) target)
-                   #`(set! next-stack (cons '#,(if next-lbl next-lbl #f) next-stack))]
-                  [((~datum resume) var)
-                   #`(void)]
-                  [((~datum forget) var)
-                   #`(void)] ;; Handled in the branch logic
-                  [((~datum give-up))
-                   #`(void)]
-                  [(~datum give-up) #'(void)]
-                  [_ #`(void)]))
+                [((~datum come-from) target)
+                 #`(void)]
+                [((~datum next) target)
+                 #`(set! next-stack (cons '#,(if next-lbl next-lbl #f) next-stack))]
+                [((~datum resume) var)
+                 #`(void)]
+                [((~datum forget) var)
+                 #`(void)] ;; Handled in the branch logic
+                [((~datum give-up))
+                 #`(void)]
+                [(~datum give-up) #'(void)]
+                [_ #`(void)]))
 
-              (define branch
-                #`[(#,current-lbl)
-                   #,compiled-op
-                   #,(syntax-parse (car operations)
-                       [((~datum give-up))
-                        #`(apply values (reverse output-acc))]
-                       [(~datum give-up)
-                        #`(apply values (reverse output-acc))]
-                       [((~datum next) target)
-                        #`(loop (get-actual-next #,current-lbl target))]
-                       [((~datum resume) var)
-                        #`(if (> var 0)
-                              (let ([return-pc (list-ref next-stack (- var 1))])
-                                (set! next-stack (drop next-stack var))
-                                (loop (get-actual-next #,current-lbl return-pc)))
-                              (loop (get-actual-next #,current-lbl '#,next-lbl)))]
-                       [((~datum forget) var)
-                        #`(begin
-                            (if (> var 0)
-                                (set! next-stack (drop next-stack var))
-                                (void))
+            (define branch
+              #`[(#,current-lbl)
+                 #,compiled-op
+                 #,(syntax-parse (car operations)
+                     [((~datum give-up))
+                      #`(apply values (reverse output-acc))]
+                     [(~datum give-up)
+                      #`(apply values (reverse output-acc))]
+                     [((~datum next) target)
+                      #`(loop (get-actual-next #,current-lbl target))]
+                     [((~datum resume) var)
+                      #`(if (> var 0)
+                            (let ([return-pc (list-ref next-stack (- var 1))])
+                              (set! next-stack (drop next-stack var))
+                              (loop (get-actual-next #,current-lbl return-pc)))
                             (loop (get-actual-next #,current-lbl '#,next-lbl)))]
-                       [_
-                        #`(loop (get-actual-next #,current-lbl '#,next-lbl))])])
+                     [((~datum forget) var)
+                      #`(begin
+                          (if (> var 0)
+                              (set! next-stack (drop next-stack var))
+                              (void))
+                          (loop (get-actual-next #,current-lbl '#,next-lbl)))]
+                     [_
+                      #`(loop (get-actual-next #,current-lbl '#,next-lbl))])])
 
-              (cons branch (loop (cdr lbls) (cdr operations)))])))
+            (cons branch (loop (cdr lbls) (cdr operations)))])))
 
      ;; --- CODE EMISSION (Phase 0) ---
      #`(let ()
@@ -310,14 +310,14 @@
 
 (displayln "Testing non-deterministic COME FROM (Outputs will vary run-to-run)")
 (sick-program
-  (10 (do (assign .I (mesh I))))
-  (20 (do (read-out .I)))          ;; Both 30 and 50 want to hijack this!
-  (30 (do (come-from 20)))         ;; Fixed macro syntax bug here
-  (40 (do (read-out 999)))
-  (45 (please (give-up)))
-  (50 (do (come-from 20)))         ;; Fixed macro syntax bug here
-  (60 (do (read-out 888)))
-  (70 (please (give-up))))
+ (10 (do (assign .I (mesh I))))
+ (20 (do (read-out .I)))          ;; Both 30 and 50 want to hijack this!
+ (30 (do (come-from 20)))         ;; Fixed macro syntax bug here
+ (40 (do (read-out 999)))
+ (45 (please (give-up)))
+ (50 (do (come-from 20)))         ;; Fixed macro syntax bug here
+ (60 (do (read-out 888)))
+ (70 (please (give-up))))
 
 ;; FIXME: does not work.
 ;; (sick-program
@@ -330,16 +330,16 @@
 ;;   (60 (please (give-up))))
 
 (check-equal?
-   (call-with-values
-    (thunk
-     (sick-program
-      (10 (do (assign *I (mesh V))))        ; Dimension 32-bit array *I to size 5
-      (20 (do (assign (sub *I 1) (mesh X))))  ; *I[1] = 10
-      (30 (do (assign (sub *I 5) (mesh III)))) ; *I[5] = 3
-      (40 (do (read-out *I)))               ; Output all elements: (10 0 0 0 3)
-      (50 (please (give-up)))))
-    list)
-   (list 10 0 0 0 3))
+ (call-with-values
+  (thunk
+   (sick-program
+    (10 (do (assign *I (mesh V))))        ; Dimension 32-bit array *I to size 5
+    (20 (do (assign (sub *I 1) (mesh X))))  ; *I[1] = 10
+    (30 (do (assign (sub *I 5) (mesh III)))) ; *I[5] = 3
+    (40 (do (read-out *I)))               ; Output all elements: (10 0 0 0 3)
+    (50 (please (give-up)))))
+  list)
+ (list 10 0 0 0 3))
 
 (require roman-numeral)
 
@@ -372,8 +372,6 @@
 ;;        (eval
 ;;         (string->sick-program "hello world")))
 ;;       list))
-
-
 
 (check-equal?
  (call-with-values
