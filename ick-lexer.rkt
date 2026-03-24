@@ -4,14 +4,14 @@
 (provide tokenize)
 
 (define keywords
-  '("DO" "PLEASE" "NEXT" "READ" "OUT" "GIVE" "UP"))
+  '("DO" "PLEASE" "NEXT" "READ" "OUT" "GIVE" "UP" "COME" "FROM"))
 
 (define (tokenize in)
   (define str (port->string in))
 
   (define words
     (regexp-match*
-     #px"\\(|\\)|<-|~|\\$|#|\\.|:|\\*|[0-9]+|[A-Za-z]+"
+     #px"\\(|\\)|<-|~|\\$|#|\\.|:|\\*|&|\\?|V|[0-9]+|[A-Za-z]+"
      str))
 
   (for/list ([w words])
