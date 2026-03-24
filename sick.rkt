@@ -109,13 +109,13 @@
 
      ;; 2. Dynamically extract all variables (.I, :V, etc.)
      (define all-vars
-       (remove-duplicates
-        (filter (lambda (sym)
-                  (and (symbol? sym)
-                       (let* ([str (symbol->string sym)]
-                              [base-name (car (string-split str "-"))])
-                         (member (substring base-name 0 1) '("." ":" "*")))))
-                (flatten (map syntax->datum ops)))))
+        (remove-duplicates
+         (filter (lambda (sym)
+                   (and (symbol? sym)
+                        (let ([str (symbol->string sym)])
+                          ;; Check for scalar or array prefixes
+                          (member (substring str 0 1) '("." ":" "*")))))
+                 (flatten (map syntax->datum ops)))))
 
      ;; Generate (define var 0) and (define var-stack '()) for each
      (define var-definitions
@@ -140,19 +140,16 @@
               (define compiled-op
                 (syntax-parse (car operations)
 
+                  [((~datum assign) ((~datum sub) arr idx) val)
+                   #`(vector-set! arr (sub1 idx) val)]
+
                   [((~datum assign) var val)
-                   (let* ([var-str (symbol->string (syntax-e #'var))]
-                          [parts (string-split var-str "-")])
+                   (let ([var-str (symbol->string (syntax-e #'var))])
                      (cond
-                       ;; Case A: Array Indexing (e.g., ,*I-1)
-                       [(> (length parts) 1)
-                        (let ([base-var (datum->syntax #'var (string->symbol (car parts)))]
-                              [idx (datum->syntax #'var (string->number (cadr parts)))])
-                          #`(vector-set! #,base-var (sub1 #,idx) val))]
-                       ;; Case B: Array Dimensioning (if var starts with , or *)
+                       ;; Array Dimensioning (if var starts with , or *)
                        [(string-prefix? var-str "*")
                         #`(set! var (make-vector val 0))]
-                       ;; Case C: Standard Scalar
+                       ;; Standard Scalar
                        [else #`(set! var val)]))]
 
                   [((~datum stash) var ...)
@@ -186,6 +183,7 @@
                    #`(void)] ;; Handled in the branch logic
                   [((~datum give-up))
                    #`(void)]
+                  [(~datum give-up) #'(void)]
                   [_ #`(void)]))
 
               (define branch
@@ -193,6 +191,8 @@
                    #,compiled-op
                    #,(syntax-parse (car operations)
                        [((~datum give-up))
+                        #`(apply values (reverse output-acc))]
+                       [(~datum give-up)
                         #`(apply values (reverse output-acc))]
                        [((~datum next) target)
                         #`(loop (get-actual-next #,current-lbl target))]
@@ -334,10 +334,67 @@
     (thunk
      (sick-program
       (10 (do (assign *I (mesh V))))        ; Dimension 32-bit array *I to size 5
-      (20 (do (assign *I-1 (mesh X))))      ; *I[1] = 10
-      (30 (do (assign *I-5 (mesh III))))    ; *I[5] = 3
+      (20 (do (assign (sub *I 1) (mesh X))))  ; *I[1] = 10
+      (30 (do (assign (sub *I 5) (mesh III)))) ; *I[5] = 3
       (40 (do (read-out *I)))               ; Output all elements: (10 0 0 0 3)
       (50 (please (give-up)))))
     list)
    (list 10 0 0 0 3))
+
+(require roman-numeral)
+
+(define (string->sick-program str)
+  (let ((len (string-length str)))
+    (cons
+     'sick-program
+     (append
+      (cons
+       '(10 (do (assign *I (mesh xi))))
+       (map
+        (lambda (p)
+          (let ((i (car p))
+                (m (cadr p)))
+            `(,(* 10 (add1 i)) (do (assign (sub *I ,i) ,m)))))
+        (map list
+             (range 1 (add1 len))
+             (map (lambda (rn) `(mesh ,rn))
+                  (map string->symbol
+                       (map number->roman
+                            (map char->integer
+                                 (string->list str))))))))
+      (list
+       `(,(* 10 (+ 2 len)) (do (read-out *I)))
+       `(,(* 10 (+ 3 len)) (give-up)))))))
+
+;; (map integer->char
+;;      (call-with-values
+;;       (thunk
+;;        (eval
+;;         (string->sick-program "hello world")))
+;;       list))
+
+
+
+(check-equal?
+ (call-with-values
+  (thunk
+   (sick-program
+    (10 (do (assign *1 (mesh XIII))))      ;; DO ,1 <- #13
+    (20 (please (assign (sub *1 1) 238)))  ;; PLEASE DO ,1 SUB #1 <- #238
+    (30 (do (assign (sub *1 2) 108)))      ;; DO ,1 SUB #2 <- #108
+    (40 (do (assign (sub *1 3) 112)))      ;; DO ,1 SUB #3 <- #112
+    (50 (do (assign (sub *1 4) 0)))        ;; DO ,1 SUB #4 <- #0
+    (60 (do (assign (sub *1 5) 64)))       ;; DO ,1 SUB #5 <- #64
+    (70 (do (assign (sub *1 6) 194)))      ;; DO ,1 SUB #6 <- #194
+    (80 (do (assign (sub *1 7) 48)))       ;; DO ,1 SUB #7 <- #48
+    (90 (please (assign (sub *1 8) 22)))   ;; PLEASE DO ,1 SUB #8 <- #22
+    (100 (do (assign (sub *1 9) 248)))     ;; DO ,1 SUB #9 <- #248
+    (110 (do (assign (sub *1 10) 168)))    ;; DO ,1 SUB #10 <- #168
+    (120 (do (assign (sub *1 11) 24)))     ;; DO ,1 SUB #11 <- #24
+    (130 (do (assign (sub *1 12) 16)))     ;; DO ,1 SUB #12 <- #16
+    (140 (do (assign (sub *1 13) 162)))    ;; DO ,1 SUB #13 <- #162
+    (150 (do (read-out *1)))               ;; PLEASE READ OUT ,1
+    (160 (please (give-up)))))
+  list)
+ (list 238 108 112 0 64 194 48 22 248 168 24 16 162))
 
