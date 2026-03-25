@@ -369,8 +369,16 @@
 
 (define-for-syntax (normalize-line line num)
   (match line
-    [(or `(do . ,_)      `(please . ,_))      `(,num (_ ,line))]
-    [(or `(,_ (do . ,_)) `(,_ (please . ,_))) `(,num ,line)]
+    [`(,lbl (do % ,pct ,expr))
+     `(,num (,pct (,lbl (do ,expr))))]
+    [`(,lbl (please % ,pct ,expr))
+     `(,num (,lbl (,pct (please ,expr))))]
+    [`(do % ,pct ,expr)
+     `(,num (,pct (_ (do ,expr))))]
+    [`(please % ,pct ,expr)
+     `(,num (_ (,pct (please ,expr))))]
+    [(or `(do . ,_)      `(please . ,_))      `(,num (100 (_ ,line)))]
+    [(or `(,_ (do . ,_)) `(,_ (please . ,_))) `(,num (100,line))]
     [_ (error (format "~a" line))]))
 
 (define-for-syntax (normalize-sick-prog prog)
@@ -382,7 +390,7 @@
 
 (define-syntax (sick-program-core stx)
   (syntax-parse stx
-    [(_ (ln:integer (lbl ((~seq (~or (~datum do) (~datum please)) ...) op))) ...)
+    [(_ (ln:integer (pct (lbl ((~seq (~or (~datum do) (~datum please)) ...) op)))) ...)
 
      ;; =====================================================================
      ;; PHASE 2: Collect all vars (w/ their types)
@@ -776,11 +784,11 @@
  (call-with-values
   (thunk
    (sick-program-core
-    (1 (_ (do (assign .I (mesh 'I)))))        ; .I = 1
-    (2 (_ (do (abstain (10)))))              ; Disable label 10
-    (3 (10 (do (assign .I (mesh 'V)))))       ; SKIPPED: .I would become 5
-    (4 (_ (do (read-out .I))))               ; Outputs 1, not 5
-    (5 (_ (please (give-up))))))
+    (1 (100 (_ (do (assign .I (mesh 'I))))))        ; .I = 1
+    (2 (100 (_ (do (abstain (10))))))              ; Disable label 10
+    (3 (100 (10 (do (assign .I (mesh 'V))))))       ; SKIPPED: .I would become 5
+    (4 (100 (_ (do (read-out .I)))))               ; Outputs 1, not 5
+    (5 (100 (_ (please (give-up)))))))
   list)
  (list 1))
 
@@ -788,18 +796,18 @@
  (call-with-values
   (thunk
    (sick-program-core
-    (1 (_ (do (assign .I (mesh 'I)))))        ; .I = 1
-    (2 (_ (do (abstain (100)))))             ; Disable the hijacker AT label 100
-    (3 (20 (do (read-out .I))))              ; Output 1. Control naturally flows to line 4.
-    (4 (_ (do (assign .I (mesh 'II)))))       ; .I = 2
-    (5 (_ (do (read-out .I))))               ; Output 2.
-    (6 (_ (please (give-up))))               ; End cleanly.
+    (1 (100 (_ (do (assign .I (mesh 'I))))))        ; .I = 1
+    (2 (100 (_ (do (abstain (100))))))             ; Disable the hijacker AT label 100
+    (3 (100 (20 (do (read-out .I)))))              ; Output 1. Control naturally flows to line 4.
+    (4 (100 (_ (do (assign .I (mesh 'II))))))       ; .I = 2
+    (5 (100 (_ (do (read-out .I)))))               ; Output 2.
+    (6 (100 (_ (please (give-up)))))               ; End cleanly.
 
     ;; --- The Hijacker ---
-    (7 (100 (do (come-from 20))))            ; Tries to intercept after 20, but is ABSTAINED!
-    (8 (_ (do (assign .I (mesh 'V)))))        ; Should NEVER run.
-    (9 (_ (do (read-out .I))))
-    (10 (_ (please (give-up))))))
+    (7 (100 (100 (do (come-from 20)))))            ; Tries to intercept after 20, but is ABSTAINED!
+    (8 (100 (_ (do (assign .I (mesh 'V))))))        ; Should NEVER run.
+    (9 (100 (_ (do (read-out .I)))))
+    (10 (100 (_ (please (give-up)))))))
   list)
  (list 1 2))
 
@@ -807,13 +815,13 @@
  (call-with-values
   (thunk
    (sick-program-core
-    (1 (_ (do (assign *I (mesh 'V)))))        ; Dimension 32-bit array *I to 5
-    (2 (_ (do (abstain (30)))))              ; Disable the assignment at label 30
-    (3 (10 (do (assign (sub *I 1) (mesh 'I))))); *I[1] = 1
-    (4 (30 (do (assign (sub *I 3) (mesh 'V))))); SKIPPED
-    (5 (40 (do (assign (sub *I 5) (mesh 'X))))); *I[5] = 10
-    (6 (_ (do (read-out *I))))               ; Should be (1 0 0 0 10)
-    (7 (_ (please (give-up))))))
+    (1 (100 (_ (do (assign *I (mesh 'V))))))        ; Dimension 32-bit array *I to 5
+    (2 (100 (_ (do (abstain (30))))))              ; Disable the assignment at label 30
+    (3 (100 (10 (do (assign (sub *I 1) (mesh 'I)))))); *I[1] = 1
+    (4 (100 (30 (do (assign (sub *I 3) (mesh 'V)))))); SKIPPED
+    (5 (100 (40 (do (assign (sub *I 5) (mesh 'X)))))); *I[5] = 10
+    (6 (100 (_ (do (read-out *I)))))               ; Should be (1 0 0 0 10)
+    (7 (100 (_ (please (give-up)))))))
   list)
  (list 1 0 0 0 10))
 
@@ -848,3 +856,5 @@
   list)
  (list 123)
  "Write In from STDIN")
+
+'(10 (do % 50 (read-out .I)))
