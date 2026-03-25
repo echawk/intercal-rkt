@@ -1,5 +1,5 @@
 #lang racket
-(require "ick.rkt"
+(require "ick-bnf.rkt"
          "ick-lexer.rkt"
          brag/support)
 

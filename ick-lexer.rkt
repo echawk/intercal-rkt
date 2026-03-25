@@ -4,7 +4,20 @@
 (provide tokenize)
 
 (define keywords
-  '("DO" "PLEASE" "NEXT" "READ" "OUT" "GIVE" "UP" "COME" "FROM"))
+  '("DO"
+    "PLEASE" "MAYBE" "NOT" "ONCE" "AGAIN" ;; Should "SUB" be here?
+    "BY" "FORGET" "RESUME" "STASH" "RETRIEVE" "IGNORE"
+    "REMEMBER" "ABSTAIN" "REINSTATE"
+    "NEXT"
+    "READ" "OUT"
+    "WRITE" "IN"
+    "GIVE" "UP" "COME" "FROM"
+    ;; Gerunds.
+    "CALCULATING" "FORGETTING" "RESUMING" "STASHING" "RETRIEVING"
+    "IGNORING" "REMEMBERING" "ABSTAINING" "REINSTATING" "NEXTING"
+    "READING"
+    "WRITING"
+    ))
 
 (define (tokenize in)
   (define str (port->string in))

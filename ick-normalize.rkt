@@ -1,6 +1,6 @@
 #lang racket
 
-(require "ick.rkt")
+(require "ick-bnf.rkt")
 (require "ick-lexer.rkt")
 (require "ick-driver.rkt")
 
