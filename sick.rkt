@@ -1,7 +1,9 @@
 #lang racket
 
 (require (for-syntax roman-numeral)
-         (for-syntax syntax/parse))
+         (for-syntax racket/match)
+         (for-syntax syntax/parse)
+)
 
 (define-syntax (mesh stx)
   (syntax-parse stx
@@ -24,6 +26,13 @@
          0
          bit-list))
 
+(define (char-ascii? ch)
+  (and (char? ch)
+       (<= (char->integer ch) 127)))
+
+(define (string-ascii? s)
+  (and (string? s)
+       (for/and ([ch (in-string s)]) (char-ascii? ch))))
 
 (define (intercal-select val mask width)
   (let* ([val-bits (int->bits val width)]
@@ -86,72 +95,138 @@
 
 (require (for-syntax racket/base syntax/parse racket/list racket/dict racket/string))
 
-(define-syntax (sick-program stx)
+;; MAJOR FIXME: need to restructure the programs to instead have their line
+;; numbers be separate from their labels - I want to make sure that before
+;; I get too far along, we do not box ourselves into a corner.
+
+;; For the come-from logic, we can simply rewrite it to have there be a mapping
+;; from label (whether it be computed or provided) to a line number -> that is
+;; also a more semantically correct option, since this also will allow us to check
+;; if a line number has been abstained or not.
+
+
+;; Also, will need to fix the current issues which arise if you decide to write
+;; (please (do (foo ...))) since it will always cause the program to fail.
+;; I think the *ideal* way to do this would be with a syntax class or something
+;; similar, but I'm somewhat open to whatever is the *correct* solution.
+
+;; Part of me also wants to refactor how lines are actually compiled anyways, since
+;; we have to add a number of checks & whatnot - particularly with regards to
+;; abstaining - I want to work on getting that functionality to be foolproof.
+
+;; I'm OK with the current forget/resume/etc stack stuff, it appears to work fine
+;; for our usecases. I'm sure that there is a more elegant way to do it.
+
+;; I will need to add in "type checks" or maybe just enforcement for our data.
+
+;; while ,A is for arrays, . and : are for 16 & 32 bit unsigned integers only.
+;; Since ',' is a character we cannot directly capture with racket (since it lives
+;; in the reader) we instead use '*' for arrays, which feels more 'C-like' anyways.
+;; (string-ascii? "phỏ")
+;; (string-ascii? "pho")
+;; (string-locale-) (char-downcase #\Ỉ)
+;; ẢA
+
+;; (car (list 'Â))
+
+;; What would be fun is if we instead used some random unicode character instead.
+
+(define-for-syntax (normalize-line line num)
+  (match line
+    [(or `(do . ,_)      `(please . ,_))      `(,num (_ ,line))]
+    [(or `(,_ (do . ,_)) `(,_ (please . ,_))) `(,num ,line)]
+    [_ (error (format "~a" line))]))
+
+(define-for-syntax (normalize-sick-prog prog)
+  (map (lambda (p)
+         (match p
+           [`(,num ,line)
+            (normalize-line line num)]))
+       (map list (range 1 (add1 (length prog))) prog)))
+
+(define-syntax (sick-program-core stx)
   (syntax-parse stx
-    [(_ (label ((~seq (~or (~datum do) (~datum please)) ...) op)) ...)
+    [(_ (ln:integer (lbl ((~seq (~or (~datum do) (~datum please)) ...) op))) ...)
 
-     ;; --- COMPILE TIME ANALYSIS (Phase 1) ---
-     (define lines (syntax->list #'(label ...)))
+     ;; =====================================================================
+     ;; PHASE 2: Collect all vars (w/ their types)
+     ;; =====================================================================
      (define ops (syntax->list #'(op ...)))
-
-     ;; 1. Build the non-deterministic COME FROM map
-     (define grouped-come-froms
-       (let ([h (make-hash)])
-         (for-each (lambda (lbl op)
-                     (syntax-parse op
-                       [((~datum come-from) target)
-                        (let ([t (syntax-e #'target)]
-                              [l (syntax-e lbl)])
-                          (hash-set! h t (cons l (hash-ref h t '()))))]
-                       [_ (void)]))
-                   lines ops)
-         (hash-map h cons)))
-
-     ;; 2. Dynamically extract all variables (.I, :V, etc.)
+     
      (define all-vars
        (remove-duplicates
         (filter (lambda (sym)
                   (and (symbol? sym)
                        (let ([str (symbol->string sym)])
-                         ;; Check for scalar or array prefixes
-                         (member (substring str 0 1) '("." ":" "*")))))
+                         ;; Added ',' to the array prefixes for future-proofing
+                         (member (substring str 0 1) '("." ":" "*" ",")))))
                 (flatten (map syntax->datum ops)))))
 
-     ;; Generate (define var 0) and (define var-stack '()) for each
+     ;; =====================================================================
+     ;; PHASE 3: Build come from map (w/ line numbers included)
+     ;; =====================================================================
+     ;; Map: target-label -> list of hijacker line numbers (ln)
+     (define grouped-come-froms
+       (let ([h (make-hash)])
+         (for-each (lambda (l-ln l-op)
+                     (syntax-parse l-op
+                       [((~datum come-from) target)
+                        (let ([t (syntax-e #'target)]
+                              [ln (syntax-e l-ln)])
+                          (hash-set! h t (cons ln (hash-ref h t '()))))]
+                       [_ (void)]))
+                   (syntax->list #'(ln ...))
+                   ops)
+         (hash-map h cons)))
+
+     ;; We also need a map from line-number -> label to check if a hijacker is abstained
+     (define ln->lbl-map
+       (let ([h (make-hash)])
+         (for-each (lambda (l-ln l-lbl)
+                     (let ([lbl-val (syntax-e l-lbl)])
+                       (unless (eq? lbl-val '_)
+                         (hash-set! h (syntax-e l-ln) lbl-val))))
+                   (syntax->list #'(ln ...))
+                   (syntax->list #'(lbl ...)))
+         h))
+
+     ;; =====================================================================
+     ;; PHASE 4: Build vars & stacks
+     ;; =====================================================================
      (define var-definitions
        (map (lambda (v)
               (define vid (datum->syntax stx v))
               (define vstack (datum->syntax stx (string->symbol (string-append (symbol->string v) "-stack"))))
               (define str (symbol->string v))
-              (if (string-prefix? str "*")
+              (if (or (string-prefix? str "*") (string-prefix? str ","))
                   #`(begin (define #,vid #f) (define #,vstack '()))
                   #`(begin (define #,vid 0)  (define #,vstack '()))))
             all-vars))
 
-     ;; 3. Generate Case Clauses
+     ;; =====================================================================
+     ;; PHASE 5 & 6: Tie it all together (Emission & Abstain table generation)
+     ;; =====================================================================
      (define case-clauses
-       (let loop ([lbls lines] [operations ops])
+       (let loop ([lns (syntax->list #'(ln ...))]
+                  [lbls (syntax->list #'(lbl ...))]
+                  [operations ops])
          (cond
-           [(null? lbls) '()]
+           [(null? lns) '()]
            [else
+            (define current-ln (car lns))
             (define current-lbl (car lbls))
-            (define next-lbl (if (null? (cdr lbls)) #f (cadr lbls)))
+            (define next-ln-val (if (null? (cdr lns)) #f (syntax-e (cadr lns))))
 
+            ;; --- Semantics compilation ---
             (define compiled-op
               (syntax-parse (car operations)
-
-                [((~datum assign) ((~datum sub) arr idx) val)
-                 #`(vector-set! arr (sub1 idx) val)]
-
+                [((~datum assign) ((~datum sub) arr idx) val) #`(vector-set! arr (sub1 idx) val)]
                 [((~datum assign) var val)
                  (let ([var-str (symbol->string (syntax-e #'var))])
                    (cond
-                     ;; Array Dimensioning (if var starts with , or *)
-                     [(string-prefix? var-str "*")
+                     [(or (string-prefix? var-str "*") (string-prefix? var-str ","))
                       #`(set! var (make-vector val 0))]
-                     ;; Standard Scalar
                      [else #`(set! var val)]))]
-
                 [((~datum stash) var ...)
                  #`(begin
                      #,@(map (lambda (v)
@@ -166,87 +241,130 @@
                                      (set! #,v (car #,vstack))
                                      (set! #,vstack (cdr #,vstack)))))
                              (syntax->list #'(var ...))))]
-
                 [((~datum read-out) var)
                  #`(let ([v var])
                      (if (vector? v)
                          (set! output-acc (append (reverse (vector->list v)) output-acc))
                          (set! output-acc (cons v output-acc))))]
-
-                [((~datum come-from) target)
-                 #`(void)]
-                [((~datum next) target)
-                 #`(set! next-stack (cons '#,(if next-lbl next-lbl #f) next-stack))]
-                [((~datum resume) var)
-                 #`(void)]
-                [((~datum forget) var)
-                 #`(void)] ;; Handled in the branch logic
-                [((~datum give-up))
-                 #`(void)]
-                [(~datum give-up) #'(void)]
+                
+                ;; Abstain / Reinstate matching
+                [((~datum abstain) (~optional (~datum from)) (target)) #`(hash-set! abstain-tbl 'target #t)]
+                [((~datum abstain) (~optional (~datum from)) target)   #`(hash-set! abstain-tbl 'target #t)]
+                [((~datum reinstate) (target)) #`(hash-set! abstain-tbl 'target #f)]
+                [((~datum reinstate) target)   #`(hash-set! abstain-tbl 'target #f)]
+                
+                ;; Control flow Ops (handled safely below, but NEXT needs to push to stack here)
+                [((~datum come-from) target) #`(void)]
+                [((~datum next) target)      #`(set! next-stack (cons '#,(if next-ln-val next-ln-val #f) next-stack))]
+                [((~datum resume) var)       #`(void)]
+                [((~datum forget) var)       #`(void)]
+                [((~datum give-up))          #`(void)]
+                [(~datum give-up)            #`(void)]
                 [_ #`(void)]))
 
+            ;; --- Clause branch generation ---
             (define branch
-              #`[(#,current-lbl)
-                 #,compiled-op
-                 #,(syntax-parse (car operations)
-                     [((~datum give-up))
-                      #`(apply values (reverse output-acc))]
-                     [(~datum give-up)
-                      #`(apply values (reverse output-acc))]
-                     [((~datum next) target)
-                      #`(loop (get-actual-next #,current-lbl target))]
-                     [((~datum resume) var)
-                      #`(if (> var 0)
-                            (let ([return-pc (list-ref next-stack (- var 1))])
-                              (set! next-stack (drop next-stack var))
-                              (loop (get-actual-next #,current-lbl return-pc)))
-                            (loop (get-actual-next #,current-lbl '#,next-lbl)))]
-                     [((~datum forget) var)
-                      #`(begin
-                          (if (> var 0)
-                              (set! next-stack (drop next-stack var))
-                              (void))
-                          (loop (get-actual-next #,current-lbl '#,next-lbl)))]
-                     [_
-                      #`(loop (get-actual-next #,current-lbl '#,next-lbl))])])
+              (let ([lbl-val (syntax-e current-lbl)]
+                    [ln-val (syntax-e current-ln)])
+                #`[(#,current-ln)
+                   (let ([is-abstained? #,(if (eq? lbl-val '_) #f #`(hash-ref abstain-tbl '#,current-lbl #f))])
+                     
+                     ;; 1. Execute Op Semantics (only if not abstained)
+                     (unless is-abstained?
+                       #,compiled-op)
 
-            (cons branch (loop (cdr lbls) (cdr operations)))])))
+                     ;; 2. Determine and execute Control Flow (Tail Call)
+                     (if is-abstained?
+                         ;; If abstained, bypass specific jump logic and just go to next natural line
+                         (loop (get-actual-next '#,lbl-val '#,next-ln-val))
+                         ;; If NOT abstained, execute specific control flow
+                         #,(syntax-parse (car operations)
+                             [((~datum give-up)) #`(apply values (reverse output-acc))]
+                             [(~datum give-up)   #`(apply values (reverse output-acc))]
+                             [((~datum next) target)
+                              #`(loop (get-actual-next '#,lbl-val (get-ln-for-lbl 'target)))]
+                             [((~datum resume) var)
+                              #`(if (> var 0)
+                                    (let ([target-pc (list-ref next-stack (- var 1))])
+                                      (set! next-stack (drop next-stack var))
+                                      (loop (get-actual-next '#,lbl-val target-pc)))
+                                    (loop (get-actual-next '#,lbl-val '#,next-ln-val)))]
+                             [((~datum forget) var)
+                              #`(begin
+                                  (if (> var 0)
+                                      (set! next-stack (drop next-stack var))
+                                      (void))
+                                  (loop (get-actual-next '#,lbl-val '#,next-ln-val)))]
+                             [_ #`(loop (get-actual-next '#,lbl-val '#,next-ln-val))])))]))
 
-     ;; --- CODE EMISSION (Phase 0) ---
+            (cons branch (loop (cdr lns) (cdr lbls) (cdr operations)))])))
+
+     ;; --- Final Code Assembly ---
      #`(let ()
          #,@var-definitions
          (define output-acc '())
          (define next-stack '())
+         (define abstain-tbl (make-hash))
 
-         ;; Inject the compile-time grouping map into the runtime
          (define cf-map '#,grouped-come-froms)
+         
+         ;; Inject Label -> Line Number map for `next` jumps
+         (define lbl->ln-map '#,(let ([h (make-hash)])
+                                  (for-each (lambda (l-ln l-lbl)
+                                              (let ([v (syntax-e l-lbl)])
+                                                (unless (eq? v '_)
+                                                  (hash-set! h v (syntax-e l-ln)))))
+                                            (syntax->list #'(ln ...))
+                                            (syntax->list #'(lbl ...)))
+                                  h))
+         
+         ;; Inject Line Number -> Label map to check if hijackers are abstained
+         (define rt-ln->lbl-map '#,ln->lbl-map)
 
-         ;; Runtime Router: Checks if the executed line was hijacked.
-         (define (get-actual-next executed-lbl natural-next)
-           (let ([hijackers (dict-ref cf-map executed-lbl '())])
-             (if (null? hijackers)
-                 natural-next
-                 (list-ref hijackers (random (length hijackers))))))
+         (define (get-ln-for-lbl target-lbl)
+           (hash-ref lbl->ln-map target-lbl (lambda () (error "Unknown label" target-lbl))))
+
+         (define (get-actual-next executed-lbl natural-next-ln)
+           (if (not (eq? executed-lbl '_))
+               (let ([hijackers (dict-ref cf-map executed-lbl '())])
+                 ;; Filter out abstainers! If the hijacker line has a label, and that label is abstained, it CANNOT hijack.
+                 (let ([active-hijackers
+                        (filter (lambda (h-ln)
+                                  (let ([h-lbl (hash-ref rt-ln->lbl-map h-ln #f)])
+                                    (if h-lbl
+                                        (not (hash-ref abstain-tbl h-lbl #f))
+                                        #t))) 
+                                hijackers)])
+                   (if (null? active-hijackers)
+                       natural-next-ln
+                       (list-ref active-hijackers (random (length active-hijackers))))))
+               natural-next-ln))
 
          (define (run)
-           (let loop ([pc #,(syntax-e (car lines))])
+           (let loop ([pc #,(syntax-e (car (syntax->list #'(ln ...))))])
              (case pc
                #,@case-clauses
                [else (error "Fell off graph! PC:" pc)])))
          (run))]))
 
+(define-syntax (sick-program stx)
+  (syntax-parse stx
+    [(_ sick-line ...)
+     (define raw-lines (syntax->datum #'(sick-line ...)))
+     (define normalized-datums (normalize-sick-prog raw-lines))
+     (datum->syntax stx `(,#'sick-program-core ,@normalized-datums) stx)]))
+
 (check-equal?
  (call-with-values
   (thunk
    (sick-program
-    (10 (do     (assign .I (mesh V))))                ; .I = 5
-    (20 (do     (assign .II (mesh III))))             ; .II = 3
-    (30 (please (assign :I (mingle .I .II))))         ; :I = Mingle(5, 3) -> 39
-    (40 (do     (read-out :I)))                       ; Accumulate 39
-    (50 (do     (assign .III (unary-xor .I))))        ; .III = XOR on 5 (returns 135 in 8-bit logic)
-    (60 (do     (read-out .III)))                     ; Accumulate 135
-    (70 (please (give-up)))))
+    (do     (assign .I (mesh V))) ; .I = 5
+    (do     (assign .II (mesh III))) ; .II = 3
+    (please (assign :I (mingle .I .II))) ; :I = Mingle(5, 3) -> 39
+    (do     (read-out :I)) ; Accumulate 39
+    (do     (assign .III (unary-xor .I))) ; .III = XOR on 5 (returns 135 in 8-bit logic)
+    (do     (read-out .III)) ; Accumulate 135
+    (please (give-up))))
   list)
  (list 39 135))
 
@@ -310,24 +428,23 @@
 
 (displayln "Testing non-deterministic COME FROM (Outputs will vary run-to-run)")
 (sick-program
- (10 (do (assign .I (mesh I))))
- (20 (do (read-out .I)))          ;; Both 30 and 50 want to hijack this!
- (30 (do (come-from 20)))         ;; Fixed macro syntax bug here
- (40 (do (read-out 999)))
- (45 (please (give-up)))
- (50 (do (come-from 20)))         ;; Fixed macro syntax bug here
- (60 (do (read-out 888)))
- (70 (please (give-up))))
+ (do (assign .I (mesh I)))
+ (20 (do (read-out .I)))
+ (do (come-from 20))
+ (do (read-out 999))
+ (please (give-up))
+ (do (come-from 20))
+ (do (read-out 888))
+ (please (give-up)))
 
-;; FIXME: does not work.
-;; (sick-program
-;;   (10 (please (assign .I (mesh X))))
-;;   (20 (stash .I))
-;;   (30 (assign .II (mingle (mesh V) (mesh III))))
-;;   (40 (please (retrieve .I)))
-;;   (50 (come-from 20))
-;;   (55 (read-out .I))
-;;   (60 (please (give-up))))
+(sick-program
+  (10 (please (assign .I (mesh X))))
+  (20 (do (stash .I)))
+  (30 (do (assign .II (mingle (mesh V) (mesh III)))))
+  (40 (please (retrieve .I)))
+  (50 (please (come-from 20)))
+  (55 (do (read-out .I)))
+  (60 (please (give-up))))
 
 (check-equal?
  (call-with-values
@@ -349,12 +466,12 @@
      'sick-program
      (append
       (cons
-       '(10 (do (assign *I (mesh xi))))
+       '(do (assign *I (mesh xi)))
        (map
         (lambda (p)
           (let ((i (car p))
                 (m (cadr p)))
-            `(,(* 10 (add1 i)) (do (assign (sub *I ,i) ,m)))))
+            `(do (assign (sub *I ,i) ,m))))
         (map list
              (range 1 (add1 len))
              (map (lambda (rn) `(mesh ,rn))
@@ -363,8 +480,8 @@
                             (map char->integer
                                  (string->list str))))))))
       (list
-       `(,(* 10 (+ 2 len)) (do (read-out *I)))
-       `(,(* 10 (+ 3 len)) (give-up)))))))
+       '(do (read-out *I))
+       '(please (give-up)))))))
 
 ;; (map integer->char
 ;;      (call-with-values
@@ -396,3 +513,47 @@
   list)
  (list 238 108 112 0 64 194 48 22 248 168 24 16 162))
 
+(check-equal?
+ (call-with-values
+  (thunk
+   (sick-program-core
+    (1 (_ (do (assign .I (mesh I)))))        ; .I = 1
+    (2 (_ (do (abstain (10)))))              ; Disable label 10
+    (3 (10 (do (assign .I (mesh V)))))       ; SKIPPED: .I would become 5
+    (4 (_ (do (read-out .I))))               ; Outputs 1, not 5
+    (5 (_ (please (give-up))))))
+  list)
+ (list 1))
+
+(check-equal?
+ (call-with-values
+  (thunk
+   (sick-program-core
+    (1 (_ (do (assign .I (mesh I)))))        ; .I = 1
+    (2 (_ (do (abstain (100)))))             ; Disable the hijacker AT label 100
+    (3 (20 (do (read-out .I))))              ; Output 1. Control naturally flows to line 4.
+    (4 (_ (do (assign .I (mesh II)))))       ; .I = 2
+    (5 (_ (do (read-out .I))))               ; Output 2.
+    (6 (_ (please (give-up))))               ; End cleanly.
+
+    ;; --- The Hijacker ---
+    (7 (100 (do (come-from 20))))            ; Tries to intercept after 20, but is ABSTAINED!
+    (8 (_ (do (assign .I (mesh V)))))        ; Should NEVER run.
+    (9 (_ (do (read-out .I))))
+    (10 (_ (please (give-up))))))
+  list)
+ (list 1 2))
+
+(check-equal?
+ (call-with-values
+  (thunk
+   (sick-program-core
+    (1 (_ (do (assign *I (mesh V)))))        ; Dimension 32-bit array *I to 5
+    (2 (_ (do (abstain (30)))))              ; Disable the assignment at label 30
+    (3 (10 (do (assign (sub *I 1) (mesh I))))); *I[1] = 1
+    (4 (30 (do (assign (sub *I 3) (mesh V))))); SKIPPED
+    (5 (40 (do (assign (sub *I 5) (mesh X))))); *I[5] = 10
+    (6 (_ (do (read-out *I))))               ; Should be (1 0 0 0 10)
+    (7 (_ (please (give-up))))))
+  list)
+ (list 1 0 0 0 10))
