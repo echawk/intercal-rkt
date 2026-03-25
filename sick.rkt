@@ -3,13 +3,249 @@
 (require (for-syntax roman-numeral)
          (for-syntax racket/match)
          (for-syntax syntax/parse)
-)
+         )
+(define ick-error-table
+  #hash(
+        ("E000" .
+                ("ICL000I ~a"
+                 "Runtime syntax error; prints the undecodable statement text."))
 
-(define-syntax (mesh stx)
-  (syntax-parse stx
-    [(_ rn:identifier)
-     (let* ([n (roman->number (symbol->string (syntax-e #'rn)))])
-       (datum->syntax stx n))]))
+        ("E017" .
+                ("ICL017I DO YOU EXPECT ME TO FIGURE THIS OUT?"
+                 "Constant outside onespot range (compile-time error)."))
+
+        ("E079" .
+                ("ICL079I PROGRAMMER IS INSUFFICIENTLY POLITE"
+                 "Too few PLEASEs (~<20%) in statement identifiers."))
+
+        ("E099" .
+                ("ICL099I PROGRAMMER IS OVERLY POLITE"
+                 "Too many PLEASEs (~>33%) in statement identifiers."))
+
+        ("E111" .
+                ("ICL111I COMMUNIST PLOT DETECTED, COMPILER IS SUICIDING"
+                 "Using non-INTERCAL-72 features with -t option."))
+
+        ("E123" .
+                ("ICL123I PROGRAM HAS DISAPPEARED INTO THE BLACK LAGOON"
+                 "Exceeded NEXT stack limit (80) or mismanaged NEXT/FORGET."))
+
+        ("E127" .
+                ("ICL127I SAYING 'ABRACADABRA' WITHOUT A MAGIC WAND WON’T DO YOU ANY GOOD"
+                 "System library could not be found."))
+
+        ("E129" .
+                ("ICL129I PROGRAM HAS GOTTEN LOST"
+                 "NEXT target cannot be resolved."))
+
+        ("E139" .
+                ("ICL139I I WASN’T PLANNING TO GO THERE ANYWAY"
+                 "ABSTAIN/REINSTATE references nonexistent line."))
+
+        ("E182" .
+                ("ICL182I YOU MUST LIKE THIS LABEL A LOT!"
+                 "Duplicate line labels are not allowed."))
+
+        ("E197" .
+                ("ICL197I SO! 65535 LABELS AREN’T ENOUGH FOR YOU?"
+                 "Invalid line label (must be 1–65535)."))
+
+        ("E200" .
+                ("ICL200I NOTHING VENTURED, NOTHING GAINED"
+                 "Invalid or nonexistent variable used."))
+
+        ("E222" .
+                ("ICL222I BUMMER, DUDE!"
+                 "Out of memory during STASH operations."))
+
+        ("E240" .
+                ("ICL240I ERROR HANDLER PRINTED SNIDE REMARK"
+                 "Array dimension too small (runtime)."))
+
+        ("E241" .
+                ("ICL241I VARIABLES MAY NOT BE STORED IN WEST HYPERSPACE"
+                 "Invalid array subscripting or dimensional mismatch."))
+
+        ("E252" .
+                ("ICL252I I’VE FORGOTTEN WHAT I WAS ABOUT TO SAY"
+                 "Out of memory during I/O."))
+
+        ("E256" .
+                ("ICL256I THAT’S TOO HARD FOR MY TINY BRAIN"
+                 "Unsupported command in PIC-INTERCAL."))
+
+        ("E275" .
+                ("ICL275I DON’T BYTE OFF MORE THAN YOU CAN CHEW"
+                 "Twospot value stored in onespot variable."))
+
+        ("E277" .
+                ("ICL277I YOU CAN ONLY DISTORT THE LAWS OF MATHEMATICS SO FAR"
+                 "Impossible reverse assignment."))
+
+        ("E281" .
+                ("ICL281I THAT MUCH QUOTATION AMOUNTS TO PLAGIARISM"
+                 "Exceeded nesting limit (3200)."))
+
+        ("E333" .
+                ("ICL333I YOU CAN’T HAVE EVERYTHING, WHERE WOULD YOU PUT IT?"
+                 "Too many variables."))
+
+        ("E345" .
+                ("ICL345I THAT’S TOO COMPLEX FOR ME TO GRASP"
+                 "Compiler ran out of memory."))
+
+        ("E404" .
+                ("ICL404I I’M ALL OUT OF CHOICES!"
+                 "No choicepoints available."))
+
+        ("E405" .
+                ("ICL405I PROGRAM REJECTED FOR MENTAL HEALTH REASONS"
+                 "Used multithreading constructs without -m."))
+
+        ("E436" .
+                ("ICL436I THROW STICK BEFORE RETRIEVING!"
+                 "RETRIEVE without STASH."))
+
+        ("E444" .
+                ("ICL444I IT CAME FROM BEYOND SPACE"
+                 "Invalid COME FROM / NEXT FROM target."))
+
+        ("E533" .
+                ("ICL533I YOU WANT MAYBE WE SHOULD IMPLEMENT 64-BIT VARIABLES?"
+                 "Value exceeds twospot limits."))
+
+        ("E553" .
+                ("ICL553I BETTER LATE THAN NEVER"
+                 "Buffer overflow detected."))
+
+        ("E555" .
+                ("ICL555I FLOW DIAGRAM IS EXCESSIVELY CONNECTED"
+                 "Multiple COME FROMs without multithreading."))
+
+        ("E562" .
+                ("ICL562I I DO NOT COMPUTE"
+                 "Input unavailable."))
+
+        ("E579" .
+                ("ICL579I WHAT BASE AND/OR LANGUAGE INCLUDES ~a?"
+                 "Invalid spelt-out digit input."))
+
+        ("E621" .
+                ("ICL621I ERROR TYPE 621 ENCOUNTERED"
+                 "Invalid NEXT stack usage."))
+
+        ("E632" .
+                ("ICL632I THE NEXT STACK RUPTURES. ALL DIE. OH, THE EMBARRASSMENT!"
+                 "RESUME past end of NEXT stack."))
+
+        ("E633" .
+                ("ICL633I PROGRAM FELL OFF THE EDGE"
+                 "Execution ran past program end."))
+
+        ("E652" .
+                ("ICL652I HOW DARE YOU INSULT ME!"
+                 "PIN used outside PIC mode."))
+
+        ("E666" .
+                ("ICL666I COMPILER HAS INDIGESTION"
+                 "Compiler ran out of memory."))
+
+        ("E774" .
+                ("ICL774I RANDOM COMPILER BUG"
+                 "Intentional random failure."))
+
+        ("E777" .
+                ("ICL777I A SOURCE IS A SOURCE, OF COURSE, OF COURSE"
+                 "Input file could not be opened."))
+
+        ("E778" .
+                ("ICL778I UNEXPLAINED COMPILER BUG"
+                 "Internal compiler/runtime failure."))
+
+        ("E810" .
+                ("ICL810I ARE ONE-CHARACTER COMMANDS TOO SHORT FOR YOU?"
+                 "Debugger received too much input."))
+
+        ("E811" .
+                ("ICL811I PROGRAM IS TOO BADLY BROKEN TO RUN"
+                 "Too many breakpoints."))
+
+        ("E888" .
+                ("ICL888I I HAVE NO FILE AND I MUST SCREAM"
+                 "Output file could not be written."))
+
+        ("E899" .
+                ("ICL899I HELLO? CAN ANYONE GIVE ME A HAND HERE?"
+                 "Required libraries unavailable."))
+
+        ("E990" .
+                ("ICL990I FLAG ETIQUETTE FAILURE BAD SCOUT NO BISCUIT"
+                 "Unknown runtime flag."))
+
+        ("E991" .
+                ("ICL991I YOU HAVE TOO MUCH ROPE TO HANG YOURSELF"
+                 "Out of memory in multithreading/backtracking."))
+
+        ("E993" .
+                ("ICL993I I GAVE UP LONG AGO"
+                 "TRY AGAIN not last statement."))
+
+        ("E994" .
+                ("ICL994I NOCTURNAL EMISSION, PLEASE LAUNDER SHEETS IMMEDIATELY"
+                 "Emitter encountered unknown opcode."))
+
+        ("E995" .
+                ("ICL995I DO YOU REALLY EXPECT ME TO HAVE IMPLEMENTED THAT?"
+                 "Unimplemented feature reached."))
+
+        ("E997" .
+                ("ICL997I ILLEGAL POSSESSION OF A CONTROLLED UNARY OPERATOR"
+                 "Operator invalid for current base."))
+
+        ("E998" .
+                ("ICL998I EXCUSE ME, YOU MUST HAVE ME CONFUSED WITH SOME OTHER COMPILER"
+                 "Unrecognized file type."))
+
+        ("E999" .
+                ("ICL999I NO SKELETON IN MY CLOSET, WOE IS ME!"
+                 "Missing skeleton file."))
+        ))
+
+(define (ick-err code . args)
+  (let ((entry (hash-ref ick-error-table code #f)))
+    (cond
+      (entry (apply format (car entry) args))
+      (else (error "Unknown INTERCAL error code" code)))))
+
+(define (ick-err/wimp code . args)
+  (let ((entry (hash-ref ick-error-table code #f)))
+    (cond
+      (entry
+       (string-append
+        (apply format (car entry) args)
+        "\n"
+        (cadr entry)))
+      (else (error "Unknown INTERCAL error code" code)))))
+
+(define (arabic->number as)
+  (match as
+    ["ZERO" 0]
+    ["ONE" 1]
+    ["TWO" 2]
+    ["THREE" 3]
+    ["FOUR" 4]
+    ["FIVE" 5]
+    ["SIX" 6]
+    ["SEVEN" 7]
+    ["EIGHT" 8]
+    ["NINE" 9]
+    [_ (ick-err "E579" as)]))
+
+(define (mesh rn)
+  (roman->number (symbol->string rn)))
+
+(define-for-syntax (mesh rn)
+  (roman->number (symbol->string rn)))
 
 ;; Helper: Integer to fixed-width list of bits (MSB to LSB)
 (define (int->bits n width)
@@ -152,7 +388,7 @@
      ;; PHASE 2: Collect all vars (w/ their types)
      ;; =====================================================================
      (define ops (syntax->list #'(op ...)))
-     
+
      (define all-vars
        (remove-duplicates
         (filter (lambda (sym)
@@ -217,10 +453,13 @@
             (define current-lbl (car lbls))
             (define next-ln-val (if (null? (cdr lns)) #f (syntax-e (cadr lns))))
 
+            ;; FIXME: need to support multidimensional arrays.
+
             ;; --- Semantics compilation ---
             (define compiled-op
               (syntax-parse (car operations)
-                [((~datum assign) ((~datum sub) arr idx) val) #`(vector-set! arr (sub1 idx) val)]
+                [((~datum assign) ((~datum sub) arr idx) val)
+                 #`(vector-set! arr (sub1 idx) val)]
                 [((~datum assign) var val)
                  (let ([var-str (symbol->string (syntax-e #'var))])
                    (cond
@@ -241,18 +480,26 @@
                                      (set! #,v (car #,vstack))
                                      (set! #,vstack (cdr #,vstack)))))
                              (syntax->list #'(var ...))))]
+                [((~datum write-in) var)
+                 ;; FIXME: add wimp-mode support.
+                 ;; FIXME: figure out a better way to do input on matrices?
+                 #`(set! var (string-join
+                              (map number->string
+                                   (map (lambda (str)
+                                          arabic->number)
+                                        (string-split (read-string)))) ""))]
                 [((~datum read-out) var)
                  #`(let ([v var])
                      (if (vector? v)
                          (set! output-acc (append (reverse (vector->list v)) output-acc))
                          (set! output-acc (cons v output-acc))))]
-                
+
                 ;; Abstain / Reinstate matching
                 [((~datum abstain) (~optional (~datum from)) (target)) #`(hash-set! abstain-tbl 'target #t)]
                 [((~datum abstain) (~optional (~datum from)) target)   #`(hash-set! abstain-tbl 'target #t)]
                 [((~datum reinstate) (target)) #`(hash-set! abstain-tbl 'target #f)]
                 [((~datum reinstate) target)   #`(hash-set! abstain-tbl 'target #f)]
-                
+
                 ;; Control flow Ops (handled safely below, but NEXT needs to push to stack here)
                 [((~datum come-from) target) #`(void)]
                 [((~datum next) target)      #`(set! next-stack (cons '#,(if next-ln-val next-ln-val #f) next-stack))]
@@ -268,7 +515,7 @@
                     [ln-val (syntax-e current-ln)])
                 #`[(#,current-ln)
                    (let ([is-abstained? #,(if (eq? lbl-val '_) #f #`(hash-ref abstain-tbl '#,current-lbl #f))])
-                     
+
                      ;; 1. Execute Op Semantics (only if not abstained)
                      (unless is-abstained?
                        #,compiled-op)
@@ -307,7 +554,7 @@
          (define abstain-tbl (make-hash))
 
          (define cf-map '#,grouped-come-froms)
-         
+
          ;; Inject Label -> Line Number map for `next` jumps
          (define lbl->ln-map '#,(let ([h (make-hash)])
                                   (for-each (lambda (l-ln l-lbl)
@@ -317,7 +564,7 @@
                                             (syntax->list #'(ln ...))
                                             (syntax->list #'(lbl ...)))
                                   h))
-         
+
          ;; Inject Line Number -> Label map to check if hijackers are abstained
          (define rt-ln->lbl-map '#,ln->lbl-map)
 
@@ -333,7 +580,7 @@
                                   (let ([h-lbl (hash-ref rt-ln->lbl-map h-ln #f)])
                                     (if h-lbl
                                         (not (hash-ref abstain-tbl h-lbl #f))
-                                        #t))) 
+                                        #t)))
                                 hijackers)])
                    (if (null? active-hijackers)
                        natural-next-ln
@@ -358,8 +605,8 @@
  (call-with-values
   (thunk
    (sick-program
-    (do     (assign .I (mesh V))) ; .I = 5
-    (do     (assign .II (mesh III))) ; .II = 3
+    (do     (assign .I (mesh 'V))) ; .I = 5
+    (do     (assign .II (mesh 'III))) ; .II = 3
     (please (assign :I (mingle .I .II))) ; :I = Mingle(5, 3) -> 39
     (do     (read-out :I)) ; Accumulate 39
     (do     (assign .III (unary-xor .I))) ; .III = XOR on 5 (returns 135 in 8-bit logic)
@@ -374,8 +621,8 @@
  (call-with-values
   (thunk
    (sick-program
-    (10 (do (assign .I (mesh III))))     ; .I = 3
-    (20 (do (assign .RES (mesh I))))     ; .RES = 1 (constant for popping 1 level)
+    (10 (do (assign .I (mesh 'III))))     ; .I = 3
+    (20 (do (assign .RES (mesh 'I))))     ; .RES = 1 (constant for popping 1 level)
 
     ;; --- Main Program ---
     (30 (do (next 60)))                  ; Call subroutine! Pushes 40 to stack.
@@ -393,8 +640,8 @@
  (call-with-values
   (thunk
    (sick-program
-    (10 (do (assign .I (mesh III))))     ; .I = 3
-    (20 (do (assign .RES (mesh I))))     ; .RES = 1
+    (10 (do (assign .I (mesh 'III))))     ; .I = 3
+    (20 (do (assign .RES (mesh 'I))))     ; .RES = 1
 
     ;; --- Main Program ---
     (30 (do (next 60)))                  ; Call subroutine! Pushes 40 to stack.
@@ -414,7 +661,7 @@
  (call-with-values
   (thunk
    (sick-program
-    (10 (do (assign .I (mesh III))))    ; .I = 3
+    (10 (do (assign .I (mesh 'III))))    ; .I = 3
     (20 (do (read-out .I)))             ; Output 3. Control flow expects to go to 30...
     (30 (please (give-up)))             ; ...but we NEVER reach this give-up!
 
@@ -428,7 +675,7 @@
 
 (displayln "Testing non-deterministic COME FROM (Outputs will vary run-to-run)")
 (sick-program
- (do (assign .I (mesh I)))
+ (do (assign .I (mesh 'I)))
  (20 (do (read-out .I)))
  (do (come-from 20))
  (do (read-out 999))
@@ -438,21 +685,21 @@
  (please (give-up)))
 
 (sick-program
-  (10 (please (assign .I (mesh X))))
-  (20 (do (stash .I)))
-  (30 (do (assign .II (mingle (mesh V) (mesh III)))))
-  (40 (please (retrieve .I)))
-  (50 (please (come-from 20)))
-  (55 (do (read-out .I)))
-  (60 (please (give-up))))
+ (10 (please (assign .I (mesh 'X))))
+ (20 (do (stash .I)))
+ (30 (do (assign .II (mingle (mesh 'V) (mesh 'III)))))
+ (40 (please (retrieve .I)))
+ (50 (please (come-from 20)))
+ (55 (do (read-out .I)))
+ (60 (please (give-up))))
 
 (check-equal?
  (call-with-values
   (thunk
    (sick-program
-    (10 (do (assign *I (mesh V))))        ; Dimension 32-bit array *I to size 5
-    (20 (do (assign (sub *I 1) (mesh X))))  ; *I[1] = 10
-    (30 (do (assign (sub *I 5) (mesh III)))) ; *I[5] = 3
+    (10 (do (assign *I (mesh 'V))))        ; Dimension 32-bit array *I to size 5
+    (20 (do (assign (sub *I 1) (mesh 'X))))  ; *I[1] = 10
+    (30 (do (assign (sub *I 5) (mesh 'III)))) ; *I[5] = 3
     (40 (do (read-out *I)))               ; Output all elements: (10 0 0 0 3)
     (50 (please (give-up)))))
   list)
@@ -494,7 +741,7 @@
  (call-with-values
   (thunk
    (sick-program
-    (10 (do (assign *1 (mesh XIII))))      ;; DO ,1 <- #13
+    (10 (do (assign *1 (mesh 'XIII))))      ;; DO ,1 <- #13
     (20 (please (assign (sub *1 1) 238)))  ;; PLEASE DO ,1 SUB #1 <- #238
     (30 (do (assign (sub *1 2) 108)))      ;; DO ,1 SUB #2 <- #108
     (40 (do (assign (sub *1 3) 112)))      ;; DO ,1 SUB #3 <- #112
@@ -517,9 +764,9 @@
  (call-with-values
   (thunk
    (sick-program-core
-    (1 (_ (do (assign .I (mesh I)))))        ; .I = 1
+    (1 (_ (do (assign .I (mesh 'I)))))        ; .I = 1
     (2 (_ (do (abstain (10)))))              ; Disable label 10
-    (3 (10 (do (assign .I (mesh V)))))       ; SKIPPED: .I would become 5
+    (3 (10 (do (assign .I (mesh 'V)))))       ; SKIPPED: .I would become 5
     (4 (_ (do (read-out .I))))               ; Outputs 1, not 5
     (5 (_ (please (give-up))))))
   list)
@@ -529,16 +776,16 @@
  (call-with-values
   (thunk
    (sick-program-core
-    (1 (_ (do (assign .I (mesh I)))))        ; .I = 1
+    (1 (_ (do (assign .I (mesh 'I)))))        ; .I = 1
     (2 (_ (do (abstain (100)))))             ; Disable the hijacker AT label 100
     (3 (20 (do (read-out .I))))              ; Output 1. Control naturally flows to line 4.
-    (4 (_ (do (assign .I (mesh II)))))       ; .I = 2
+    (4 (_ (do (assign .I (mesh 'II)))))       ; .I = 2
     (5 (_ (do (read-out .I))))               ; Output 2.
     (6 (_ (please (give-up))))               ; End cleanly.
 
     ;; --- The Hijacker ---
     (7 (100 (do (come-from 20))))            ; Tries to intercept after 20, but is ABSTAINED!
-    (8 (_ (do (assign .I (mesh V)))))        ; Should NEVER run.
+    (8 (_ (do (assign .I (mesh 'V)))))        ; Should NEVER run.
     (9 (_ (do (read-out .I))))
     (10 (_ (please (give-up))))))
   list)
@@ -548,11 +795,11 @@
  (call-with-values
   (thunk
    (sick-program-core
-    (1 (_ (do (assign *I (mesh V)))))        ; Dimension 32-bit array *I to 5
+    (1 (_ (do (assign *I (mesh 'V)))))        ; Dimension 32-bit array *I to 5
     (2 (_ (do (abstain (30)))))              ; Disable the assignment at label 30
-    (3 (10 (do (assign (sub *I 1) (mesh I))))); *I[1] = 1
-    (4 (30 (do (assign (sub *I 3) (mesh V))))); SKIPPED
-    (5 (40 (do (assign (sub *I 5) (mesh X))))); *I[5] = 10
+    (3 (10 (do (assign (sub *I 1) (mesh 'I))))); *I[1] = 1
+    (4 (30 (do (assign (sub *I 3) (mesh 'V))))); SKIPPED
+    (5 (40 (do (assign (sub *I 5) (mesh 'X))))); *I[5] = 10
     (6 (_ (do (read-out *I))))               ; Should be (1 0 0 0 10)
     (7 (_ (please (give-up))))))
   list)
