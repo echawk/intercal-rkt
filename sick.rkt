@@ -394,7 +394,6 @@
         (filter (lambda (sym)
                   (and (symbol? sym)
                        (let ([str (symbol->string sym)])
-                         ;; Added ',' to the array prefixes for future-proofing
                          (member (substring str 0 1) '("." ":" "*" ",")))))
                 (flatten (map syntax->datum ops)))))
 
@@ -459,13 +458,17 @@
             (define compiled-op
               (syntax-parse (car operations)
                 [((~datum assign) ((~datum sub) arr idx) val)
-                 #`(vector-set! arr (sub1 idx) val)]
+                 #`(unless (hash-ref ignore-tbl (quote arr) #f)
+                     (vector-set! arr (sub1 idx) val))]
                 [((~datum assign) var val)
                  (let ([var-str (symbol->string (syntax-e #'var))])
                    (cond
                      [(or (string-prefix? var-str "*") (string-prefix? var-str ","))
-                      #`(set! var (make-vector val 0))]
-                     [else #`(set! var val)]))]
+                      #'(unless (hash-ref ignore-tbl (quote var) #f)
+                          (set! var (make-vector val 0)))]
+                     [else
+                      #`(unless (hash-ref ignore-tbl (quote var) #f)
+                          (set! var val))]))]
                 [((~datum stash) var ...)
                  #`(begin
                      #,@(map (lambda (v)
@@ -480,14 +483,22 @@
                                      (set! #,v (car #,vstack))
                                      (set! #,vstack (cdr #,vstack)))))
                              (syntax->list #'(var ...))))]
+                [((~datum ignore) var)
+                 #`(hash-set! ignore-tbl (quote var) #t)]
+                [((~datum remember) var)
+                 #`(hash-set! ignore-tbl (quote var) #f)]
                 [((~datum write-in) var)
                  ;; FIXME: add wimp-mode support.
                  ;; FIXME: figure out a better way to do input on matrices?
-                 #`(set! var (string-join
-                              (map number->string
-                                   (map (lambda (str)
-                                          arabic->number)
-                                        (string-split (read-string)))) ""))]
+                 ;; FIXME: move this logic out of here & make it a function so
+                 ;; racket can better optimize it.
+                 #`(set! var (string->number
+                              (string-join
+                               (map number->string
+                                    (map (lambda (str)
+                                           ;; FIXME: can input numbers as roman numeras as well.
+                                           (arabic->number str))
+                                         (string-split (read-line)))) "")))]
                 [((~datum read-out) var)
                  #`(let ([v var])
                      (if (vector? v)
@@ -552,6 +563,7 @@
          (define output-acc '())
          (define next-stack '())
          (define abstain-tbl (make-hash))
+         (define ignore-tbl (make-hash))
 
          (define cf-map '#,grouped-come-froms)
 
@@ -804,3 +816,35 @@
     (7 (_ (please (give-up))))))
   list)
  (list 1 0 0 0 10))
+
+
+(check-equal?
+ (call-with-values
+  (thunk
+   (sick-program
+    (do (assign .I (mesh 'I)))     ; .I = 1
+    (do (ignore .I))              ; .I is now read-only
+    (do (assign .I (mesh 'V)))     ; SKIPPED: Silently fails because .I is ignored
+    (do (read-out .I))            ; Outputs 1
+    (do (remember .I))            ; .I is read/write again
+    (do (assign .I (mesh 'X)))     ; .I = 10
+    (do (read-out .I))            ; Outputs 10
+    (please (give-up))))
+  list)
+ (list 1 10)
+ "Ignore and Remember scalar logic")
+
+
+(check-equal?
+ (call-with-values
+  (thunk
+   ;; Simulating standard input for the WRITE IN command
+   (with-input-from-string "ONE TWO THREE"
+     (thunk
+      (sick-program
+       (do (write-in .I))        ; Reads "123", converts to 123
+       (do (read-out .I))
+       (please (give-up))))))
+  list)
+ (list 123)
+ "Write In from STDIN")
