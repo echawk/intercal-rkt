@@ -1,9 +1,13 @@
 #lang racket
 
-(require (for-syntax roman-numeral)
-         (for-syntax racket/match)
-         (for-syntax syntax/parse)
-         )
+(require
+ roman-numeral
+ (for-syntax roman-numeral)
+ (for-syntax racket/match)
+ (for-syntax syntax/parse))
+
+(provide (all-defined-out))
+
 (define ick-error-table
   #hash(
         ("E000" .
@@ -242,7 +246,9 @@
     [_ (ick-err "E579" as)]))
 
 (define (mesh rn)
-  (roman->number (symbol->string rn)))
+  (cond
+    ((number? rn) rn)
+    ((symbol? rn) (roman->number (symbol->string rn)))))
 
 (define-for-syntax (mesh rn)
   (roman->number (symbol->string rn)))
@@ -307,25 +313,7 @@
 (define (unary-or val)  (intercal-unary bitwise-ior val 8))
 (define (unary-xor val) (intercal-unary bitwise-xor val 8))
 
-(test-case "INTERCAL Bitwise Operations"
-  ;; MINGLE ($): Interleaves bits of 5 (0101) and 3 (0011)
-  ;; Padded to 8 bits: a = 00000101, b = 00000011
-  ;; Mingled: 00 00 00 00 00 01 00 11 -> 0000000000010011 (binary) -> 19 (decimal)
-  (check-equal? (intercal-mingle 5 3 8) 39 "Mingle 5 and 3")
 
-  ;; SELECT (~): Selects bits of 5 (0101) using mask 3 (0011)
-  ;; val = 00000101, mask = 00000011
-  ;; Keeps only the last two bits of val (0, 1), packed to the right -> 01 -> 1
-  (check-equal? (intercal-select 5 3 8) 1 "Select 5 using mask 3")
-
-  ;; UNARY AND (&): val AND right-rotated val
-  ;; val = 5 (00000101), rotated = 10000010
-  ;; 00000101 AND 10000010 = 00000000 -> 0
-  (check-equal? (unary-and 5 ) 0 "Unary AND on 5")
-
-  ;; UNARY OR (V): val OR right-rotated val
-  ;; 00000101 OR 10000010 = 10000111 -> 135
-  (check-equal? (unary-or 5 ) 135 "Unary OR on 5"))
 
 (define (sick-dec val) (max 0 (sub1 val)))
 
@@ -367,34 +355,49 @@
 
 ;; What would be fun is if we instead used some random unicode character instead.
 
+(define-for-syntax (extract-body body pct is-not is-once is-again)
+  (match body
+    [`(not ,rest)   (extract-body rest pct #t is-once is-again)]
+    [`(once ,rest)  (extract-body rest pct is-not #t is-again)]
+    [`(again ,rest) (extract-body rest pct is-not is-once #t)]
+    [`(% ,p ,rest)  (extract-body rest p is-not is-once is-again)]
+    [op             (list pct is-not is-once is-again op)]))
+
 (define-for-syntax (normalize-line line num)
   (match line
-    [`(,lbl (do % ,pct ,expr))
-     `(,num (,pct (,lbl (do ,expr))))]
-    [`(,lbl (please % ,pct ,expr))
-     `(,num (,lbl (,pct (please ,expr))))]
-    [`(do % ,pct ,expr)
-     `(,num (,pct (_ (do ,expr))))]
-    [`(please % ,pct ,expr)
-     `(,num (_ (,pct (please ,expr))))]
-    [(or `(do . ,_)      `(please . ,_))      `(,num (100 (_ ,line)))]
-    [(or `(,_ (do . ,_)) `(,_ (please . ,_))) `(,num (100,line))]
-    [_ (error (format "~a" line))]))
+    ;; Labeled line
+    [`(,lbl ,(list (and m (or 'do 'please)) body))
+     (match-define (list pct is-not is-once is-again op)
+       (extract-body body 100 #f #f #f))
+     `(,num ,lbl ,m ,pct ,is-not ,is-once ,is-again ,op)]
+    ;; Unlabeled line
+    [`(,(and m (or 'do 'please)) ,body)
+     (match-define (list pct is-not is-once is-again op)
+       (extract-body body 100 #f #f #f))
+     `(,num _ ,m ,pct ,is-not ,is-once ,is-again ,op)]
+    [_ (error (format "Invalid sick line format: ~a" line))]))
 
 (define-for-syntax (normalize-sick-prog prog)
   (map (lambda (p)
          (match p
-           [`(,num ,line)
-            (normalize-line line num)]))
+           [`(,num ,line) (normalize-line line num)]))
        (map list (range 1 (add1 (length prog))) prog)))
+
+;; Evaluates targets like (mesh XI) or (11) at compile time
+(define-for-syntax (eval-label-target tgt-stx)
+  (syntax-parse tgt-stx
+    [((~datum mesh) rn)
+     (let ([e (syntax-e #'rn)])
+       (if (symbol? e) (roman->number (symbol->string e)) e))]
+    [(tgt) (syntax-e #'tgt)]
+    [tgt (syntax-e #'tgt)]))
+
 
 (define-syntax (sick-program-core stx)
   (syntax-parse stx
-    [(_ (ln:integer (pct (lbl ((~seq (~or (~datum do) (~datum please)) ...) op)))) ...)
+    ;; Accept the new normalized tuple format!
+    [(_ (ln:integer lbl modifier pct:integer is-not:boolean is-once:boolean is-again:boolean op) ...)
 
-     ;; =====================================================================
-     ;; PHASE 2: Collect all vars (w/ their types)
-     ;; =====================================================================
      (define ops (syntax->list #'(op ...)))
 
      (define all-vars
@@ -405,16 +408,12 @@
                          (member (substring str 0 1) '("." ":" "*" ",")))))
                 (flatten (map syntax->datum ops)))))
 
-     ;; =====================================================================
-     ;; PHASE 3: Build come from map (w/ line numbers included)
-     ;; =====================================================================
-     ;; Map: target-label -> list of hijacker line numbers (ln)
      (define grouped-come-froms
        (let ([h (make-hash)])
          (for-each (lambda (l-ln l-op)
                      (syntax-parse l-op
                        [((~datum come-from) target)
-                        (let ([t (syntax-e #'target)]
+                        (let ([t (eval-label-target #'target)]
                               [ln (syntax-e l-ln)])
                           (hash-set! h t (cons ln (hash-ref h t '()))))]
                        [_ (void)]))
@@ -422,7 +421,6 @@
                    ops)
          (hash-map h cons)))
 
-     ;; We also need a map from line-number -> label to check if a hijacker is abstained
      (define ln->lbl-map
        (let ([h (make-hash)])
          (for-each (lambda (l-ln l-lbl)
@@ -433,9 +431,6 @@
                    (syntax->list #'(lbl ...)))
          h))
 
-     ;; =====================================================================
-     ;; PHASE 4: Build vars & stacks
-     ;; =====================================================================
      (define var-definitions
        (map (lambda (v)
               (define vid (datum->syntax stx v))
@@ -446,25 +441,26 @@
                   #`(begin (define #,vid 0)  (define #,vstack '()))))
             all-vars))
 
-     ;; =====================================================================
-     ;; PHASE 5 & 6: Tie it all together (Emission & Abstain table generation)
-     ;; =====================================================================
      (define case-clauses
        (let loop ([lns (syntax->list #'(ln ...))]
                   [lbls (syntax->list #'(lbl ...))]
+                  [pcts (syntax->list #'(pct ...))]
+                  [is-onces (syntax->list #'(is-once ...))]
+                  [is-agains (syntax->list #'(is-again ...))]
                   [operations ops])
          (cond
            [(null? lns) '()]
            [else
             (define current-ln (car lns))
             (define current-lbl (car lbls))
+            (define current-pct (car pcts))
+            (define is-once-val (syntax-e (car is-onces)))
+            (define is-again-val (syntax-e (car is-agains)))
+            (define current-op (car operations))
             (define next-ln-val (if (null? (cdr lns)) #f (syntax-e (cadr lns))))
 
-            ;; FIXME: need to support multidimensional arrays.
-
-            ;; --- Semantics compilation ---
             (define compiled-op
-              (syntax-parse (car operations)
+              (syntax-parse current-op
                 [((~datum assign) ((~datum sub) arr idx) val)
                  #`(unless (hash-ref ignore-tbl (quote arr) #f)
                      (vector-set! arr (sub1 idx) val))]
@@ -491,21 +487,13 @@
                                      (set! #,v (car #,vstack))
                                      (set! #,vstack (cdr #,vstack)))))
                              (syntax->list #'(var ...))))]
-                [((~datum ignore) var)
-                 #`(hash-set! ignore-tbl (quote var) #t)]
-                [((~datum remember) var)
-                 #`(hash-set! ignore-tbl (quote var) #f)]
+                [((~datum ignore) var)   #`(hash-set! ignore-tbl (quote var) #t)]
+                [((~datum remember) var) #`(hash-set! ignore-tbl (quote var) #f)]
                 [((~datum write-in) var)
-                 ;; FIXME: add wimp-mode support.
-                 ;; FIXME: figure out a better way to do input on matrices?
-                 ;; FIXME: move this logic out of here & make it a function so
-                 ;; racket can better optimize it.
                  #`(set! var (string->number
                               (string-join
                                (map number->string
-                                    (map (lambda (str)
-                                           ;; FIXME: can input numbers as roman numeras as well.
-                                           (arabic->number str))
+                                    (map (lambda (str) (arabic->number str))
                                          (string-split (read-line)))) "")))]
                 [((~datum read-out) var)
                  #`(let ([v var])
@@ -513,69 +501,112 @@
                          (set! output-acc (append (reverse (vector->list v)) output-acc))
                          (set! output-acc (cons v output-acc))))]
 
-                ;; Abstain / Reinstate matching
-                [((~datum abstain) (~optional (~datum from)) (target)) #`(hash-set! abstain-tbl 'target #t)]
-                [((~datum abstain) (~optional (~datum from)) target)   #`(hash-set! abstain-tbl 'target #t)]
-                [((~datum reinstate) (target)) #`(hash-set! abstain-tbl 'target #f)]
-                [((~datum reinstate) target)   #`(hash-set! abstain-tbl 'target #f)]
+                [((~datum abstain) (~optional (~datum from)) target)
+                 (let ([t (eval-label-target #'target)])
+                   #`(hash-set! abstain-tbl (get-ln-for-lbl '#,t) #t))]
+                [((~datum reinstate) target)
+                 (let ([t (eval-label-target #'target)])
+                   #`(hash-set! abstain-tbl (get-ln-for-lbl '#,t) #f))]
 
-                ;; Control flow Ops (handled safely below, but NEXT needs to push to stack here)
+                [((~datum nothing)) #`(void)]
+                [(~datum nothing)   #`(void)]
+
+                ;; 80-depth NEXT stack limit implemented!
                 [((~datum come-from) target) #`(void)]
-                [((~datum next) target)      #`(set! next-stack (cons '#,(if next-ln-val next-ln-val #f) next-stack))]
+                [((~datum next) target)
+                 #`(if (>= (length next-stack) 80)
+                       (error "INTERCAL Error 79: NEXT stack overflow (limit 80)")
+                       (set! next-stack (cons '#,(if next-ln-val next-ln-val #f) next-stack)))]
                 [((~datum resume) var)       #`(void)]
                 [((~datum forget) var)       #`(void)]
                 [((~datum give-up))          #`(void)]
                 [(~datum give-up)            #`(void)]
                 [_ #`(void)]))
 
-            ;; --- Clause branch generation ---
             (define branch
               (let ([lbl-val (syntax-e current-lbl)]
-                    [ln-val (syntax-e current-ln)])
+                    [pct-val (syntax-e current-pct)])
                 #`[(#,current-ln)
-                   (let ([is-abstained? #,(if (eq? lbl-val '_) #f #`(hash-ref abstain-tbl '#,current-lbl #f))])
-
-                     ;; 1. Execute Op Semantics (only if not abstained)
-                     (unless is-abstained?
-                       #,compiled-op)
-
-                     ;; 2. Determine and execute Control Flow (Tail Call)
+                   (let ([is-abstained? (hash-ref abstain-tbl #,current-ln #f)])
                      (if is-abstained?
-                         ;; If abstained, bypass specific jump logic and just go to next natural line
-                         (loop (get-actual-next '#,lbl-val '#,next-ln-val))
-                         ;; If NOT abstained, execute specific control flow
-                         #,(syntax-parse (car operations)
-                             [((~datum give-up)) #`(apply values (reverse output-acc))]
-                             [(~datum give-up)   #`(apply values (reverse output-acc))]
-                             [((~datum next) target)
-                              #`(loop (get-actual-next '#,lbl-val (get-ln-for-lbl 'target)))]
-                             [((~datum resume) var)
-                              #`(if (> var 0)
-                                    (let ([target-pc (list-ref next-stack (- var 1))])
-                                      (set! next-stack (drop next-stack var))
-                                      (loop (get-actual-next '#,lbl-val target-pc)))
-                                    (loop (get-actual-next '#,lbl-val '#,next-ln-val)))]
-                             [((~datum forget) var)
-                              #`(begin
-                                  (if (> var 0)
-                                      (set! next-stack (drop next-stack var))
-                                      (void))
-                                  (loop (get-actual-next '#,lbl-val '#,next-ln-val)))]
-                             [_ #`(loop (get-actual-next '#,lbl-val '#,next-ln-val))])))]))
+                         (begin
+                           ;; Skipped! Update state based on modifiers, and ALWAYS BROADCAST LABEL
+                           #, (if (or is-once-val is-again-val) #`(update-state! #,current-ln) #`(void))
+                          (loop (get-actual-next '#,lbl-val '#,next-ln-val)))
 
-            (cons branch (loop (cdr lns) (cdr lbls) (cdr operations)))])))
+                         (let ([roll (random 100)])
+                           (if (< roll #,pct-val)
+                               (begin
+                                 ;; Executed!
+                                 #,compiled-op
+                                 #, (if (or is-once-val is-again-val) #`(update-state! #,current-ln) #`(void))
+
+                                 #,(syntax-parse current-op
+                                     [((~datum give-up)) #`(apply values (reverse output-acc))]
+                                     [(~datum give-up)   #`(apply values (reverse output-acc))]
+                                     [((~datum next) target)
+                                      (let ([t (eval-label-target #'target)])
+                                        #`(loop (get-actual-next '#,lbl-val (get-ln-for-lbl '#,t))))]
+                                     [((~datum resume) var)
+                                      #`(if (> var 0)
+                                            (let ([target-pc (list-ref next-stack (- var 1))])
+                                              (set! next-stack (drop next-stack var))
+                                              (loop (get-actual-next '#,lbl-val target-pc)))
+                                            (loop (get-actual-next '#,lbl-val '#,next-ln-val)))]
+                                     [((~datum forget) var)
+                                      #`(begin
+                                          (if (> var 0)
+                                              (set! next-stack (drop next-stack var))
+                                              (void))
+                                          (loop (get-actual-next '#,lbl-val '#,next-ln-val)))]
+                                     [_ #`(loop (get-actual-next '#,lbl-val '#,next-ln-val))]))
+
+                               (begin
+                                 ;; Failed execution chance. Acts as if it wasn't encountered (no update-state)
+                                 (loop (get-actual-next '#,lbl-val '#,next-ln-val)))))))]))
+
+            (cons branch (loop (cdr lns) (cdr lbls) (cdr pcts) (cdr is-onces) (cdr is-agains) (cdr operations)))])))
 
      ;; --- Final Code Assembly ---
      #`(let ()
          #,@var-definitions
          (define output-acc '())
          (define next-stack '())
-         (define abstain-tbl (make-hash))
          (define ignore-tbl (make-hash))
 
-         (define cf-map '#,grouped-come-froms)
+         ;; State tables for the Unified Theory
+         (define source-is-not-tbl (make-hash))
+         (define has-once-tbl (make-hash))
+         (define has-again-tbl (make-hash))
+         (define abstain-tbl (make-hash))
 
-         ;; Inject Label -> Line Number map for `next` jumps
+         #,@(filter-map (lambda (l-ln l-is-not)
+                          #`(begin
+                              (hash-set! source-is-not-tbl #,l-ln #,l-is-not)
+                              (hash-set! abstain-tbl #,l-ln #,l-is-not)))
+                        (syntax->list #'(ln ...))
+                        (syntax->list #'(is-not ...)))
+
+         #,@(filter-map (lambda (l-ln l-is-once)
+                          (if (syntax-e l-is-once) #`(hash-set! has-once-tbl #,l-ln #t) #f))
+                        (syntax->list #'(ln ...))
+                        (syntax->list #'(is-once ...)))
+
+         #,@(filter-map (lambda (l-ln l-is-again)
+                          (if (syntax-e l-is-again) #`(hash-set! has-again-tbl #,l-ln #t) #f))
+                        (syntax->list #'(ln ...))
+                        (syntax->list #'(is-again ...)))
+
+         ;; The magic state mutator
+         ;; FIX: Renamed pattern variable 'ln' to 'target-ln'
+         (define (update-state! target-ln)
+           (cond
+             [(hash-ref has-once-tbl target-ln #f)
+              (hash-set! abstain-tbl target-ln (not (hash-ref source-is-not-tbl target-ln)))]
+             [(hash-ref has-again-tbl target-ln #f)
+              (hash-set! abstain-tbl target-ln (hash-ref source-is-not-tbl target-ln))]))
+
+         (define cf-map '#,grouped-come-froms)
          (define lbl->ln-map '#,(let ([h (make-hash)])
                                   (for-each (lambda (l-ln l-lbl)
                                               (let ([v (syntax-e l-lbl)])
@@ -584,8 +615,6 @@
                                             (syntax->list #'(ln ...))
                                             (syntax->list #'(lbl ...)))
                                   h))
-
-         ;; Inject Line Number -> Label map to check if hijackers are abstained
          (define rt-ln->lbl-map '#,ln->lbl-map)
 
          (define (get-ln-for-lbl target-lbl)
@@ -594,17 +623,14 @@
          (define (get-actual-next executed-lbl natural-next-ln)
            (if (not (eq? executed-lbl '_))
                (let ([hijackers (dict-ref cf-map executed-lbl '())])
-                 ;; Filter out abstainers! If the hijacker line has a label, and that label is abstained, it CANNOT hijack.
                  (let ([active-hijackers
-                        (filter (lambda (h-ln)
-                                  (let ([h-lbl (hash-ref rt-ln->lbl-map h-ln #f)])
-                                    (if h-lbl
-                                        (not (hash-ref abstain-tbl h-lbl #f))
-                                        #t)))
-                                hijackers)])
+                        (filter (lambda (h-ln) (not (hash-ref abstain-tbl h-ln #f))) hijackers)])
                    (if (null? active-hijackers)
                        natural-next-ln
-                       (list-ref active-hijackers (random (length active-hijackers))))))
+                       (let ([chosen (list-ref active-hijackers (random (length active-hijackers)))])
+                         ;; Hijackers count as executed, so they update state too!
+                         (update-state! chosen)
+                         chosen))))
                natural-next-ln))
 
          (define (run)
