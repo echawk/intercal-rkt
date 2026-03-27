@@ -497,6 +497,10 @@
                                          (string-split (read-line)))) "")))]
                 [((~datum read-out) var)
                  #`(let ([v var])
+                     (displayln
+                      (cond ((and (number? v) (zero? v)) "-")
+                            ((number? v) (string-upcase (number->roman v)))
+                            (else "")))
                      (if (vector? v)
                          (set! output-acc (append (reverse (vector->list v)) output-acc))
                          (set! output-acc (cons v output-acc))))]
@@ -515,7 +519,7 @@
                 [((~datum come-from) target) #`(void)]
                 [((~datum next) target)
                  #`(if (>= (length next-stack) 80)
-                       (error "INTERCAL Error 79: NEXT stack overflow (limit 80)")
+                       (ick-err "E123")
                        (set! next-stack (cons '#,(if next-ln-val next-ln-val #f) next-stack)))]
                 [((~datum resume) var)       #`(void)]
                 [((~datum forget) var)       #`(void)]
