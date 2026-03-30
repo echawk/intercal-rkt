@@ -12,10 +12,10 @@
 ;; (parse
 ;;  (tokenize
 ;;   (open-input-string
-;;    "10 DO .I <- 5
-;;     20 PLEASE NEXT 10
-;;     30 DO READ OUT .I
-;;     40 PLEASE GIVE UP")))
+;;    "(10) DO .I <- #5
+;;     PLEASE DO (10) NEXT
+;;     DO READ OUT .I
+;;     PLEASE GIVE UP")))
 
 ;; (parse
 ;;  (tokenize
