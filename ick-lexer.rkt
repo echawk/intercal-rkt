@@ -24,7 +24,7 @@
 
   (define words
     (regexp-match*
-     #px"\\(|\\)|<-|~|\\$|#|\\.|:|\\*|&|\\?|V|[0-9]+|[A-Za-z]+"
+     #px"\\(|\\)|<-|~|\\$|#|\\.|:|\\*|,|&|\\?|V|[0-9]+|[A-Za-z]+"
      str))
 
   (for/list ([w words])
@@ -37,8 +37,11 @@
       [(equal? w ".") (token 'DOT w)]
       [(equal? w ":") (token 'COLON w)]
       [(equal? w "*") (token 'STAR w)]
+      [(equal? w ",") (token 'COMMA w)]
       [(equal? w "<-") (token 'GETS w)]
       [(equal? w "#") (token 'MESH w)]
+      [(equal? w "'") (token 'SQUOTE w)]
+      [(equal? w "\"") (token 'DQUOTE w)]
 
       [(equal? w "$") (token 'MINGLE w)]
       [(equal? w "~") (token 'SELECT w)]
@@ -48,6 +51,9 @@
       [(equal? w "V") (token 'UNARY_OR w)]
       [(equal? w "?") (token 'UNARY_XOR w)]
 
+      ;; Parens for Labels.
+      [(equal? w "(") (token 'LPAREN w)]
+      [(equal? w ")") (token 'RPAREN w)]
 
       ;; Array access
       [(equal? w "SUB") (token 'SUB w)]
