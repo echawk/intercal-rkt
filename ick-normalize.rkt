@@ -1,84 +1,179 @@
 #lang racket
 
-(require "ick-bnf.rkt")
-(require "ick-lexer.rkt")
-(require "ick-driver.rkt")
-
 (provide normalize-program)
 
-(define (normalize stx)
-  (match stx
+;; =============================================================================
+;; EXPRESSION NORMALIZER
+;; Crushes the dense 6-layer CST from brag down into clean Lisp expressions.
+;; =============================================================================
+(define (normalize-expr ast)
+  (match ast
+    ;; 1. Pass-throughs (Collapse redundant layers)
+    [`(expr ,e)    (normalize-expr e)]
+    [`(mingle ,m)  (normalize-expr m)]
+    [`(select ,s)  (normalize-expr s)]
+    [`(unary ,u)   (normalize-expr u)]
+    [`(postfix ,p) (normalize-expr p)]
+    [`(primary ,p) (normalize-expr p)]
 
-    [`(expr "&" ,e) `(unary-and ,(normalize e))]
-    [`(expr "V" ,e) `(unary-or ,(normalize e))]
-    [`(expr "?" ,e) `(unary-xor ,(normalize e))]
+    ;; 2. Binary Operators
+    [`(mingle ,lhs "$" ,rhs) `(mingle ,(normalize-expr lhs) ,(normalize-expr rhs))]
+    [`(select ,lhs "~" ,rhs) `(select ,(normalize-expr lhs) ,(normalize-expr rhs))]
 
-    ;; unwrap redundant expr
-    [`(expr ,x) (normalize x)]
+    ;; 3. Unary Operators
+    [`(unary "&" ,rhs) `(unary-and ,(normalize-expr rhs))]
+    [`(unary "V" ,rhs) `(unary-or  ,(normalize-expr rhs))]
+    [`(unary "?" ,rhs) `(unary-xor ,(normalize-expr rhs))]
 
-    ;; constants
-    [`(expr "#" ,n)
-     `(const ,n)]
+    ;; 4. Subscripting (Arrays)
+    [`(var ,base "SUB" ,idx)     `(sub ,(normalize-expr base) ,(normalize-expr idx))]
+    [`(postfix ,base "SUB" ,idx) `(sub ,(normalize-expr base) ,(normalize-expr idx))]
 
-    ;; variable
-    [`(var "." (ident ,id))
-     `(var ,(string->symbol (format ".~a" id)))]
+    ;; 5. Variables (e.g. "." "I" -> '.I)
+    [`(var ,prefix (ident ,id))
+     (string->symbol (format "~a~a" prefix id))]
 
-    [`(var ":" (ident ,id))
-     `(var ,(string->symbol (format ":~a" id)))]
+    ;; 6. Constants
+    [`(primary "#" ,n)    `(mesh ,n)]
+    [`(primary "MESH" ,n) `(mesh ,n)]
 
-    [`(var "*" (ident ,id))
-     `(var ,(string->symbol (format "*~a" id)))]
+    ;; 7. Targets (for control flow labels)
+    [`(target "(" ,n ")") n]
+    [`(target "#" ,n)     `(mesh ,n)]
+    [`(target "MESH" ,n)  `(mesh ,n)]
+    [`(target ,n)         n]
 
-    ;; binary ops
-    [`(expr ,lhs "$" ,rhs)
-     `(mingle ,(normalize lhs) ,(normalize rhs))]
-
-    [`(expr ,lhs "~" ,rhs)
-     `(select ,(normalize lhs) ,(normalize rhs))]
-
-    [`(var ,base "SUB" ,idx)
-     `(sub ,(normalize base) ,(normalize idx))]
-    ;; fallback
-    [else stx]))
+    ;; Base Cases
+    [(? number? n) n]
+    [(? symbol? s) s]
+    [(? string? s) s]
+    [_ (error "Unknown expression shape:" ast)]))
 
 
+;; =============================================================================
+;; STASH / RETRIEVE HELPER
+;; Recursively extracts variables, ignoring the '+' tokens from C-INTERCAL
+;; =============================================================================
+(define (extract-stash-vars ast)
+  (match ast
+    ;; Peel back layers
+    [`(expr ,e)    (extract-stash-vars e)]
+    [`(mingle ,m)  (extract-stash-vars m)]
+    [`(select ,s)  (extract-stash-vars s)]
+    [`(unary ,u)   (extract-stash-vars u)]
+    [`(postfix ,p) (extract-stash-vars p)]
+    [`(primary ,p) (extract-stash-vars p)]
+
+    ;; Split at binaries
+    [`(mingle ,l "$" ,r) (append (extract-stash-vars l) (extract-stash-vars r))]
+    [`(select ,l "~" ,r) (append (extract-stash-vars l) (extract-stash-vars r))]
+    [`(unary ,op ,r)     (extract-stash-vars r)]
+
+    ;; If it's a subscripted array, we stash the array, not the index
+    [`(var ,base "SUB" ,idx)     (extract-stash-vars base)]
+    [`(postfix ,base "SUB" ,idx) (extract-stash-vars base)]
+
+    ;; Found a variable! Extract it.
+    [`(var ,prefix (ident ,id))
+     (list (string->symbol (format "~a~a" prefix id)))]
+
+    [_ '()]))
+
+
+;; =============================================================================
+;; STATEMENT NORMALIZER
+;; Maps semantic operations and weaves in Modifiers (PLEASE, NOT, ONCE, etc.)
+;; =============================================================================
 (define (normalize-op op)
   (match op
-    [`(assign ,v "<-" ,e)
-     `(assign ,(normalize v) ,(normalize e))]
+    [`(op (assign ,var "<-" ,expr))
+     `(assign ,(normalize-expr var) ,(normalize-expr expr))]
 
-    [`(readout "READ" "OUT" ,e)
-     `(read-out ,(normalize e))]
+    [`(op (next ,tgt "NEXT"))
+     `(next ,(normalize-expr tgt))]
 
-    [`(next "NEXT" ,n)
-     `(next ,n)]
+    [`(op (comefrom "COME" "FROM" ,tgt))
+     `(come-from ,(normalize-expr tgt))]
 
-    [`(giveup "GIVE" "UP")
+    [`(op (readout "READ" "OUT" ,expr))
+     `(read-out ,(normalize-expr expr))]
+
+    [`(op (writein "WRITE" "IN" ,var))
+     `(write-in ,(normalize-expr var))]
+
+    [`(op (stash "STASH" ,expr))
+     `(stash ,@(extract-stash-vars expr))]
+
+    [`(op (retrieve "RETRIEVE" ,expr))
+     `(retrieve ,@(extract-stash-vars expr))]
+
+    [`(op (forget "FORGET" ,expr))
+     `(forget ,(normalize-expr expr))]
+
+    [`(op (resume "RESUME" ,expr))
+     `(resume ,(normalize-expr expr))]
+
+    [`(op (abstain "ABSTAIN" "FROM" (abstain-target ,tgt)))
+     `(abstain ,(normalize-expr tgt))]
+
+    [`(op (reinstate "REINSTATE" (abstain-target ,tgt)))
+     `(reinstate ,(normalize-expr tgt))]
+
+    [`(op (giveup "GIVE" "UP"))
      `(give-up)]
 
-    [else op]))
+    [`(op (nothing "NOTHING"))
+     `(nothing)]
+
+    [_ (error "Unrecognized operation:" op)]))
+
+(define (normalize-stmt stmt)
+  (match stmt
+    [`(stmt ,parts ...)
+     ;; Separate the structural components
+     (define prefixes (filter (lambda (x) (and (list? x) (eq? (car x) 'do-prefix))) parts))
+     (define postfixes (filter (lambda (x) (and (list? x) (eq? (car x) 'do-postfix))) parts))
+     (define op-node (findf (lambda (x) (and (list? x) (eq? (car x) 'op))) parts))
+
+     (define prefix-strs (map cadr prefixes))
+     (define postfix-strs (map cadr postfixes))
+
+     ;; Normalize the core semantic operation
+     (define base-op (normalize-op op-node))
+
+     ;; Wrap with state modifiers (Not -> Once -> Again)
+     (define is-not (or (member "NOT" prefix-strs) (member "DON'T" prefix-strs)))
+     (define with-not (if is-not `(not ,base-op) base-op))
+
+     (define is-once (member "ONCE" postfix-strs))
+     (define with-once (if is-once `(once ,with-not) with-not))
+
+     (define is-again (member "AGAIN" postfix-strs))
+     (define with-again (if is-again `(again ,with-once) with-once))
+
+     ;; Wrap in the outermost politeness level
+     (define is-please (member "PLEASE" prefix-strs))
+     (if is-please
+         `(please ,with-again)
+         `(do ,with-again))]))
+
+
+;; =============================================================================
+;; TOP-LEVEL PROGRAM NORMALIZER
+;; =============================================================================
+(define (normalize-line line)
+  (match line
+    ;; 1. Line WITH a label
+    [`(line (label "(" ,n ")") ,stmt)
+     `(,n ,(normalize-stmt stmt))]
+
+    ;; 2. Line WITHOUT a label
+    [`(line ,stmt)
+     (normalize-stmt stmt)]))
 
 (define (normalize-program tree)
   (match tree
     [`(program ,lines ...)
      `(sick-program
-       ,@(map normalize-line lines))]))
-
-(define (normalize-line line)
-  (match line
-    [`(line (label ,n)
-            (stmt ,_ (op ,op)))
-     `(,n (do ,(normalize-op op)))]))
-
-
-
-;; (normalize-program
-;;  (syntax->datum
-;;   (parse
-;;    (tokenize
-;;     (open-input-string
-;;      "10 DO .I <- 5
-;;     20 PLEASE NEXT 10
-;;     30 DO READ OUT .I
-;;     40 PLEASE GIVE UP")))))
+       ,@(map normalize-line lines))]
+    [_ (error "Unrecognized program structure:" tree)]))
