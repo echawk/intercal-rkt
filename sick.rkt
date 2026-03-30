@@ -498,7 +498,7 @@
                 [((~datum read-out) var)
                  #`(let ([v var])
                      (displayln
-                      (cond ((and (number? v) (zero? v)) "-")
+                      (cond ((and (number? v) (zero? v)) "_")
                             ((number? v) (string-upcase (number->roman v)))
                             (else "")))
                      (if (vector? v)
