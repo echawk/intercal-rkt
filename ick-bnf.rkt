@@ -3,6 +3,7 @@
 program : line+
 
 line : label? stmt
+     | label
 
 label : LPAREN NUMBER RPAREN
 
@@ -10,6 +11,7 @@ do-prefix : PLEASE
           | DO
           | NOT
           | MAYBE
+          | PERCENT NUMBER
 
 do-postfix : ONCE
            | AGAIN
@@ -24,6 +26,8 @@ op : assign
    | writein
    | stash
    | retrieve
+   | ignore
+   | remember
    | forget
    | resume
    | abstain
@@ -31,6 +35,10 @@ op : assign
    | nothing
 
 assign : var GETS expr
+
+ignore : IGNORE var
+
+remember : REMEMBER var
 
 target : NUMBER
        | LPAREN NUMBER RPAREN
@@ -45,8 +53,8 @@ giveup : GIVE UP
 abstain-target : target
 
 writein : WRITE IN var
-stash : STASH expr
-retrieve : RETRIEVE expr
+stash : STASH expr-list
+retrieve : RETRIEVE expr-list
 forget : FORGET expr
 resume : RESUME expr
 
@@ -60,6 +68,9 @@ var : DOT ident
     | COLON ident
     | COMMA ident
     | var SUB expr
+
+expr-list : expr
+          | expr-list PLUS expr
 
 expr : mingle
 
@@ -85,3 +96,5 @@ primary
   : var
   | NUMBER
   | MESH NUMBER
+  | SQUOTE expr SQUOTE
+  | DQUOTE expr DQUOTE

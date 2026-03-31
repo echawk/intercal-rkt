@@ -651,3 +651,63 @@
      (define normalized-datums (normalize-sick-prog raw-lines))
      (datum->syntax stx `(,#'sick-program-core ,@normalized-datums) stx)]))
 
+
+(require
+ (for-syntax racket/file)
+ (for-syntax "ick-lexer.rkt")
+ (for-syntax "ick-bnf.rkt")
+ (for-syntax "ick-normalize.rkt"))
+
+(define-syntax (sick-program/syslib stx)
+  (syntax-parse stx
+    [(_ sick-line ...)
+
+     ;; What the fuck racket.
+     (define (clean-intercal-string str)
+       (define lines (string-split str "\n"))
+
+       ;; 1. Matches lines that start with a VALID operation or variable assignment.
+       ;; It ensures DO/PLEASE is immediately followed by a real command (STASH, etc) or a variable [.:,;]
+       (define valid-start-rx
+         #px"^[ \t]*(?:\\([0-9]+\\)[ \t]*)?(?:(?:PLEASE|DO|NOT|MAYBE|%[0-9]+)[ \t]*)+(?:STASH|RETRIEVE|IGNORE|REMEMBER|ABSTAIN|REINSTATE|FORGET|RESUME|READ|WRITE|COME|GIVE|NOTHING|[.:,;]|\\()")
+
+       ;; 2. Matches multi-line continuations.
+       ;; These are indented lines containing ONLY valid INTERCAL math/logic symbols, quotes, and numbers.
+       ;; This cleanly catches wrapped math while rejecting "DOUBLE OR SINGLE PRECISION OVERFLOW"
+       (define continuation-rx
+         #px"^[ \t]+[\"'?&V!#0-9.:,~$\\s]+$")
+
+       (define cleaned-lines
+         (filter (lambda (l)
+                   (or (regexp-match? valid-start-rx l)
+                       (regexp-match? continuation-rx l)))
+                 lines))
+
+       (string-join cleaned-lines "\n"))
+
+     ;; 1. Get raw user AST
+     (define raw-user-ast (syntax->datum #'(sick-line ...)))
+
+     ;; 2. Parse syslib to raw AST
+     (define full-syslib-ast
+       (normalize-program
+        (syntax->datum
+         (parse
+          (tokenize
+           (open-input-string
+            (clean-intercal-string (file->string "syslib.i"))))))))
+
+     ;; 3. Strip the wrapper off syslib
+     (define syslib-ast
+       (if (and (list? full-syslib-ast) (symbol? (car full-syslib-ast)))
+           (cdr full-syslib-ast)
+           full-syslib-ast))
+
+     ;; 4. COMBINE the ASTs first
+     (define combined-ast (append raw-user-ast syslib-ast))
+
+     ;; 5. Compile the ENTIRE combined AST into the low-level IR
+     (define combined-ir (normalize-sick-prog combined-ast))
+
+     ;; 6. Output to the evaluator
+     (datum->syntax stx `(,#'sick-program-core ,@combined-ir) stx)]))

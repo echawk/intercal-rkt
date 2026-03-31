@@ -23,10 +23,12 @@
 (define (tokenize in)
   (define str (port->string in))
 
+  (define clean-str (string-replace str "!" "'."))
+
   (define words
     (regexp-match*
-     #px"\\(|\\)|<-|~|\\$|#|\\.|:|\\*|,|&|\\?|V|[0-9]+|[A-Za-z]+"
-     str))
+     #px"\\(|\\)|<-|~|\\$|#|\\+|\\.|:|\\*|,|&|\\?|V|!|%|'|\"|[0-9]+|[A-Za-z]+"
+     clean-str))
 
   (for/list ([w words])
     (cond
@@ -43,13 +45,17 @@
       [(equal? w "#") (token 'MESH w)]
       [(equal? w "'") (token 'SQUOTE w)]
       [(equal? w "\"") (token 'DQUOTE w)]
+      [(equal? w "%") (token 'PERCENT w)]
 
       [(equal? w "$") (token 'MINGLE w)]
       [(equal? w "~") (token 'SELECT w)]
 
+      [(equal? w "+") (token 'PLUS w)]
+
       ;; unary operations
       [(equal? w "&") (token 'UNARY_AND w)]
       [(equal? w "V") (token 'UNARY_OR w)]
+      [(equal? w "!") (token 'UNARY_OR w)]
       [(equal? w "?") (token 'UNARY_XOR w)]
 
       ;; Parens for Labels.

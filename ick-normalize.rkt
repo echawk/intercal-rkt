@@ -16,6 +16,10 @@
     [`(postfix ,p) (normalize-expr p)]
     [`(primary ,p) (normalize-expr p)]
 
+    ;; INTERCAL Grouping (Sparks and Rabbit Ears act as parentheses)
+    [`(primary "'" ,e "'")  (normalize-expr e)]
+    [`(primary "\"" ,e "\"") (normalize-expr e)]
+
     ;; 2. Binary Operators
     [`(mingle ,lhs "$" ,rhs) `(mingle ,(normalize-expr lhs) ,(normalize-expr rhs))]
     [`(select ,lhs "~" ,rhs) `(select ,(normalize-expr lhs) ,(normalize-expr rhs))]
@@ -64,6 +68,12 @@
     [`(postfix ,p) (extract-stash-vars p)]
     [`(primary ,p) (extract-stash-vars p)]
 
+    [`(primary "'" ,e "'")  (extract-stash-vars e)]
+    [`(primary "\"" ,e "\"") (extract-stash-vars e)]
+
+    [`(expr-list ,e1 "+" ,e2) (append (extract-stash-vars e1) (extract-stash-vars e2))]
+    [`(expr-list ,e) (extract-stash-vars e)]
+
     ;; Split at binaries
     [`(mingle ,l "$" ,r) (append (extract-stash-vars l) (extract-stash-vars r))]
     [`(select ,l "~" ,r) (append (extract-stash-vars l) (extract-stash-vars r))]
@@ -100,6 +110,12 @@
 
     [`(op (writein "WRITE" "IN" ,var))
      `(write-in ,(normalize-expr var))]
+
+    [`(op (ignore "IGNORE" ,var))
+     `(ignore ,(normalize-expr var))]
+
+    [`(op (remember "REMEMBER" ,var))
+     `(remember ,(normalize-expr var))]
 
     [`(op (stash "STASH" ,expr))
      `(stash ,@(extract-stash-vars expr))]
@@ -151,11 +167,15 @@
      (define is-again (member "AGAIN" postfix-strs))
      (define with-again (if is-again `(again ,with-once) with-once))
 
+     ;; Look for a percentage modifier (e.g. `(do-prefix "%" 50)`)
+     (define prob-prefix (findf (lambda (p) (equal? (cadr p) "%")) prefixes))
+     (define with-prob (if prob-prefix `(% ,(caddr prob-prefix) ,with-again) with-again))
+
      ;; Wrap in the outermost politeness level
      (define is-please (member "PLEASE" prefix-strs))
      (if is-please
-         `(please ,with-again)
-         `(do ,with-again))]))
+         `(please ,with-prob)
+         `(do ,with-prob))]))
 
 
 ;; =============================================================================
@@ -163,11 +183,12 @@
 ;; =============================================================================
 (define (normalize-line line)
   (match line
-    ;; 1. Line WITH a label
     [`(line (label "(" ,n ")") ,stmt)
      `(,n ,(normalize-stmt stmt))]
 
-    ;; 2. Line WITHOUT a label
+    [`(line (label "(" ,n ")"))
+     `(,n (do (give-up)))]
+
     [`(line ,stmt)
      (normalize-stmt stmt)]))
 
@@ -177,3 +198,7 @@
      `(sick-program
        ,@(map normalize-line lines))]
     [_ (error "Unrecognized program structure:" tree)]))
+
+
+
+
