@@ -34,6 +34,19 @@ op : assign
    | reinstate
    | nothing
 
+gerund : CALCULATING
+       | FORGETTING
+       | RESUMING
+       | STASHING
+       | RETRIEVING
+       | IGNORING
+       | REMEMBERING
+       | ABSTAINING
+       | REINSTATING
+       | NEXTING
+       | READING
+       | WRITING
+
 assign : var GETS expr
 
 ignore : IGNORE var
