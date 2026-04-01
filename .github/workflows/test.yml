@@ -30,10 +30,11 @@ jobs:
         if: steps.cache-racket.outputs.cache-hit != 'true'
         run: raco pkg install --auto component brag roman-numeral
 
-      - name: Install C-INTERCAL
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y intercal
+      - name: Cache and install C-INTERCAL
+        uses: awalsh128/cache-apt-pkgs-action@v1.6.0
+        with:
+          packages: intercal
+          version: 1.0
 
       - name: Run ick frontend tests
         run: raco test ick-tests.rkt
