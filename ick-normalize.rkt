@@ -177,6 +177,21 @@
          `(please ,with-prob)
          `(do ,with-prob))]))
 
+;; =============================================================================
+;; AST REWRITER: FIX UNARY PRECEDENCE
+;; =============================================================================
+;; Turns `(mingle (unary-xor X) Y)` into `(unary-xor (mingle X Y))`
+(define (fix-unary-ast ast)
+  (match ast
+    [`(mingle (,U ,X) ,Y)
+     #:when (member U '(unary-and unary-or unary-xor))
+     `(,U (mingle ,(fix-unary-ast X) ,(fix-unary-ast Y)))]
+    [`(select (,U ,X) ,Y)
+     #:when (member U '(unary-and unary-or unary-xor))
+     `(,U (select ,(fix-unary-ast X) ,(fix-unary-ast Y)))]
+    [(list elements ...)
+     (map fix-unary-ast elements)]
+    [other other]))
 
 ;; =============================================================================
 ;; TOP-LEVEL PROGRAM NORMALIZER
@@ -195,8 +210,9 @@
 (define (normalize-program tree)
   (match tree
     [`(program ,lines ...)
-     `(sick-program
-       ,@(map normalize-line lines))]
+     (fix-unary-ast
+      `(sick-program/syslib
+        ,@(map normalize-line lines)))]
     [_ (error "Unrecognized program structure:" tree)]))
 
 

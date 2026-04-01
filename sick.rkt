@@ -307,11 +307,11 @@
       (bits->int result-bits))))
 
 
-(define (mingle a b) (intercal-mingle a b 8))
-(define (select a b) (intercal-select a b 8))
-(define (unary-and val) (intercal-unary bitwise-and val 8))
-(define (unary-or val)  (intercal-unary bitwise-ior val 8))
-(define (unary-xor val) (intercal-unary bitwise-xor val 8))
+(define (mingle a b) (intercal-mingle a b 16))
+(define (select a b) (intercal-select a b 16))
+(define (unary-and val) (intercal-unary bitwise-and val 16))
+(define (unary-or val)  (intercal-unary bitwise-ior val 16))
+(define (unary-xor val) (intercal-unary bitwise-xor val 16))
 
 
 
@@ -487,8 +487,15 @@
                                      (set! #,v (car #,vstack))
                                      (set! #,vstack (cdr #,vstack)))))
                              (syntax->list #'(var ...))))]
-                [((~datum ignore) var)   #`(hash-set! ignore-tbl (quote var) #t)]
-                [((~datum remember) var) #`(hash-set! ignore-tbl (quote var) #f)]
+                [((~datum ignore) var ...)
+                 #`(begin
+                     #,@(map (lambda (v) #`(hash-set! ignore-tbl (quote #,v) #t))
+                             (syntax->list #'(var ...))))]
+
+                [((~datum remember) var ...)
+                 #`(begin
+                     #,@(map (lambda (v) #`(hash-set! ignore-tbl (quote #,v) #f))
+                             (syntax->list #'(var ...))))]
                 [((~datum write-in) var)
                  #`(set! var (string->number
                               (string-join
@@ -550,19 +557,36 @@
                                      [(~datum give-up)   #`(apply values (reverse output-acc))]
                                      [((~datum next) target)
                                       (let ([t (eval-label-target #'target)])
-                                        #`(loop (get-actual-next '#,lbl-val (get-ln-for-lbl '#,t))))]
+                                        ;; NEXT directly branches to its target. It does not complete sequentially,
+                                        ;; therefore it cannot trigger COME FROM interception.
+                                        #`(loop (get-ln-for-lbl '#,t)))]
+
                                      [((~datum resume) var)
-                                      #`(if (> var 0)
-                                            (let ([target-pc (list-ref next-stack (- var 1))])
-                                              (set! next-stack (drop next-stack var))
-                                              (loop (get-actual-next '#,lbl-val target-pc)))
-                                            (loop (get-actual-next '#,lbl-val '#,next-ln-val)))]
+                                      #`(let ([count var])
+                                          (cond
+                                            ;; Attempting to RESUME 0 or RESUME past the stack causes the stack to rupture.
+                                            [(<= count 0) (ick-err "E632")]
+                                            [(> count (length next-stack)) (ick-err "E632")]
+                                            [else
+                                             ;; Branch to the oldest entry popped (the one deepest in the removed segment)
+                                             (let ([target-pc (list-ref next-stack (- count 1))])
+                                               (set! next-stack (drop next-stack count))
+                                               ;; RESUME transfers control explicitly, bypassing COME FROM interceptions.
+                                               (loop target-pc))]))]
+
                                      [((~datum forget) var)
-                                      #`(begin
-                                          (if (> var 0)
-                                              (set! next-stack (drop next-stack var))
-                                              (void))
-                                          (loop (get-actual-next '#,lbl-val '#,next-ln-val)))]
+                                      #`(let ([count var])
+                                          (cond
+                                            ;; FORGET 0 is a valid no-op, let execution naturally fall through.
+                                            [(<= count 0) (loop (get-actual-next '#,lbl-val '#,next-ln-val))]
+                                            ;; Attempting to FORGET past the stack causes the program to disappear into the black lagoon.
+                                            [(> count (length next-stack)) (ick-err "E123")]
+                                            [else
+                                             (set! next-stack (drop next-stack count))
+                                             ;; FORGET does not transfer control, it completes sequentially.
+                                             ;; Therefore, COME FROM checks (get-actual-next) are correctly applied here.
+                                             (loop (get-actual-next '#,lbl-val '#,next-ln-val))]))]
+
                                      [_ #`(loop (get-actual-next '#,lbl-val '#,next-ln-val))]))
 
                                (begin
@@ -577,6 +601,9 @@
          (define output-acc '())
          (define next-stack '())
          (define ignore-tbl (make-hash))
+
+         (define (#,(datum->syntax stx 'sub) arr idx)
+           (vector-ref arr (sub1 idx)))
 
          ;; State tables for the Unified Theory
          (define source-is-not-tbl (make-hash))
@@ -602,7 +629,6 @@
                         (syntax->list #'(is-again ...)))
 
          ;; The magic state mutator
-         ;; FIX: Renamed pattern variable 'ln' to 'target-ln'
          (define (update-state! target-ln)
            (cond
              [(hash-ref has-once-tbl target-ln #f)
@@ -622,7 +648,7 @@
          (define rt-ln->lbl-map '#,ln->lbl-map)
 
          (define (get-ln-for-lbl target-lbl)
-           (hash-ref lbl->ln-map target-lbl (lambda () (error "Unknown label" target-lbl))))
+           (hash-ref lbl->ln-map target-lbl (lambda () (ick-err "E129"))))
 
          (define (get-actual-next executed-lbl natural-next-ln)
            (if (not (eq? executed-lbl '_))
@@ -641,6 +667,7 @@
            (let loop ([pc #,(syntax-e (car (syntax->list #'(ln ...))))])
              (case pc
                #,@case-clauses
+               [(#f) (ick-err "E633")]
                [else (error "Fell off graph! PC:" pc)])))
          (run))]))
 
@@ -675,7 +702,7 @@
        ;; These are indented lines containing ONLY valid INTERCAL math/logic symbols, quotes, and numbers.
        ;; This cleanly catches wrapped math while rejecting "DOUBLE OR SINGLE PRECISION OVERFLOW"
        (define continuation-rx
-         #px"^[ \t]+[\"'?&V!#0-9.:,~$\\s]+$")
+         #px"^[ \t]+[\"'?&V!#0-9.:,~$\\s+-]+$")
 
        (define cleaned-lines
          (filter (lambda (l)
@@ -705,6 +732,22 @@
 
      ;; 4. COMBINE the ASTs first
      (define combined-ast (append raw-user-ast syslib-ast))
+
+     ;; ;; 4.5. AST Rewriter: Fix unary operator precedence from the parser
+     ;; ;; Turns `(mingle (unary-xor X) Y)` into `(unary-xor (mingle X Y))`
+     ;; (define (fix-unary-ast ast)
+     ;;   (match ast
+     ;;     [`(mingle (,U ,X) ,Y)
+     ;;      #:when (member U '(unary-and unary-or unary-xor))
+     ;;      `(,U (mingle ,(fix-unary-ast X) ,(fix-unary-ast Y)))]
+     ;;     [`(select (,U ,X) ,Y)
+     ;;      #:when (member U '(unary-and unary-or unary-xor))
+     ;;      `(,U (select ,(fix-unary-ast X) ,(fix-unary-ast Y)))]
+     ;;     [(list elements ...)
+     ;;      (map fix-unary-ast elements)]
+     ;;     [other other]))
+
+     ;; (define fixed-ast (fix-unary-ast combined-ast))
 
      ;; 5. Compile the ENTIRE combined AST into the low-level IR
      (define combined-ir (normalize-sick-prog combined-ast))
