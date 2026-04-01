@@ -12,45 +12,45 @@
 (test-case "basic assignment"
   (check-equal?
    (norm* "(1) DO .I <- 5")
-   '(sick-program
+   '(sick-program/syslib
      (1 (do (assign .I 5))))))
 
 (test-case "mesh constant"
   (check-equal?
    (norm* "(10) DO .I <- #5")
-   '(sick-program
+   '(sick-program/syslib
      (10 (do (assign .I (mesh 5)))))))
 
 (test-case "mingle operator"
   (check-equal?
    (norm* "(10) DO :X <- .I $ #3")
-   '(sick-program
+   '(sick-program/syslib
      (10 (do (assign :X
                      (mingle .I (mesh 3))))))))
 
 (test-case "select operator"
   (check-equal?
    (norm* "(10) DO :X <- .I ~ #3")
-   '(sick-program
+   '(sick-program/syslib
      (10 (do (assign :X
                      (select .I (mesh 3))))))))
 
 (test-case "read out"
   (check-equal?
    (norm* "(10) DO READ OUT .I")
-   '(sick-program
+   '(sick-program/syslib
      (10 (do (read-out .I))))))
 
 (test-case "next"
   (check-equal?
    (norm* "(10) DO (20) NEXT")
-   '(sick-program
+   '(sick-program/syslib
      (10 (do (next 20))))))
 
 (test-case "give up"
   (check-equal?
    (norm* "(10) PLEASE GIVE UP")
-   '(sick-program
+   '(sick-program/syslib
      (10 (please (give-up))))))
 
 (test-case "multi-line program"
@@ -59,7 +59,7 @@
     "(10) DO .I <- 5
      (20) DO READ OUT .I
      PLEASE GIVE UP")
-   '(sick-program
+   '(sick-program/syslib
      (10 (do (assign .I 5)))
      (20 (do (read-out .I)))
      (please (give-up)))))
@@ -68,7 +68,8 @@
   (check-equal?
    (norm*
     "(10) DO .I SUB 1 <- #5")
-   '(sick-program (10 (do (assign (sub .I 1) (mesh 5)))))))
+   '(sick-program/syslib
+     (10 (do (assign (sub .I 1) (mesh 5)))))))
 
 ;; (test-case "sub in expr"
 ;;   (parse*
@@ -77,17 +78,17 @@
 (test-case "unary ops"
   (check-equal?
    (norm* "(10) DO .X <- & .I")
-   '(sick-program
+   '(sick-program/syslib
      (10 (do (assign .X
                      (unary-and .I))))))
   (check-equal?
    (norm* "(10) DO .X <- ? .I")
-   '(sick-program
+   '(sick-program/syslib
      (10 (do (assign .X
                      (unary-xor .I))))))
   (check-equal?
    (norm* "(10) DO .X <- V .I")
-   '(sick-program
+   '(sick-program/syslib
      (10 (do (assign .X
                      (unary-or .I)))))))
 
