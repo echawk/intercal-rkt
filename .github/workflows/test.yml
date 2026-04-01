@@ -1,0 +1,50 @@
+name: Test
+
+on: [push]
+
+jobs:
+  make-test:
+    name: make-test
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: Bogdanp/setup-racket@v1.15
+        with:
+          architecture: 'x64'
+          distribution: 'full'
+          variant: 'CS'
+          version: 'stable'
+
+      - name: Install racket libraries
+        run: raco pkg install --auto component brag roman-numeral
+
+      - name: Install C-INTERCAL
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y intercal
+
+      - name: Run ick frontend tests
+        run: raco test ick-tests.rkt
+
+      - name: Run S-ick implementation tests
+        run: raco test sick-test.rkt
+
+      - name: Run fib.i test
+        run: |
+          ick -b fib.i && ./fib | awk 'NF' > fib.out.ick
+          racket fib.i | grep -v '[0-9]' > fib.out.rkt
+          diff fib.out.ick fib.out.rkt
+
+      - name: Run hanoi.i test
+        run: |
+          ick -b hanoi.i && echo 'THREE' | ./hanoi | awk 'NF' > hanoi.out.ick
+          echo 'THREE' | racket hanoi.i | grep -v '[0-9]' > hanoi.out.rkt
+          diff hanoi.out.ick hanoi.out.rkt
+
+      - name: Run onceagain.i test
+        run: |
+          ick -b onceagain.i && ./onceagain | awk 'NF' > onceagain.out.ick
+          racket onceagain.i | grep -v '[0-9]' > onceagain.out.rkt
+          diff onceagain.out.ick onceagain.out.rkt
