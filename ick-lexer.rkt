@@ -23,7 +23,11 @@
 (define (tokenize in)
   (define str (port->string in))
 
-  (define clean-str (string-replace str "!" "'."))
+  ;; Replace some common "idioms".
+  (define clean-str
+    (string-replace
+     (string-replace str "!" "'.")
+     "DON'T" "DO NOT"))
 
   (define words
     (regexp-match*
