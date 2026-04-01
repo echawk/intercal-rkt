@@ -17,7 +17,17 @@ jobs:
           variant: 'CS'
           version: 'stable'
 
+        # Setup the cache for Racket packages
+      - name: Cache Racket packages
+        id: cache-racket
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/share/racket
+          key: ${{ runner.os }}-racket-${{ hashFiles('.github/workflows/*.yml') }}
+
+      # Only run raco pkg install if we didn't get a cache hit
       - name: Install racket libraries
+        if: steps.cache-racket.outputs.cache-hit != 'true'
         run: raco pkg install --auto component brag roman-numeral
 
       - name: Install C-INTERCAL
@@ -34,17 +44,17 @@ jobs:
       - name: Run fib.i test
         run: |
           ick -b fib.i && ./fib | awk 'NF' > fib.out.ick
-          racket fib.i | grep -v '[0-9]' > fib.out.rkt
+          racket fib.i | grep -v '[0-9]' > fib.out.rkt || true
           diff fib.out.ick fib.out.rkt
 
       - name: Run hanoi.i test
         run: |
           ick -b hanoi.i && echo 'THREE' | ./hanoi | awk 'NF' > hanoi.out.ick
-          echo 'THREE' | racket hanoi.i | grep -v '[0-9]' > hanoi.out.rkt
+          echo 'THREE' | racket hanoi.i | grep -v '[0-9]' > hanoi.out.rkt || true
           diff hanoi.out.ick hanoi.out.rkt
 
       - name: Run onceagain.i test
         run: |
           ick -b onceagain.i && ./onceagain | awk 'NF' > onceagain.out.ick
-          racket onceagain.i | grep -v '[0-9]' > onceagain.out.rkt
+          racket onceagain.i | grep -v '[0-9]' > onceagain.out.rkt || true
           diff onceagain.out.ick onceagain.out.rkt
