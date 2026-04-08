@@ -317,6 +317,11 @@
 
 (define (sick-dec val) (max 0 (sub1 val)))
 
+(define sick-debug
+  (make-parameter
+   (let ([v (getenv "SICK_DEBUG")])
+     (and v (not (member (string-downcase v) '("0" "false" "no" "")))))))
+
 (struct intercal-array (dimensions data) #:transparent)
 
 (define (make-intercal-array dims)
@@ -616,61 +621,63 @@
             (define branch
               (let ([lbl-val (syntax-e current-lbl)]
                     [pct-val (syntax-e current-pct)])
+                (define continue-stx
+                  (syntax-parse current-op
+                    [((~datum give-up)) #`(apply values (reverse output-acc))]
+                    [(~datum give-up)   #`(apply values (reverse output-acc))]
+                    [((~datum next) target)
+                     (let ([t (eval-label-target #'target)])
+                       #`(begin
+                           (trace! 'next (format "pc=~a target=~a stack=~a" #,current-ln '#,t next-stack))
+                           (loop (get-ln-for-lbl '#,t))))]
+                    [((~datum resume) var)
+                     #`(let ([count var])
+                         (cond
+                           [(<= count 0) (ick-err "E632")]
+                           [(> count (length next-stack))
+                            (trace! 'resume-error (format "pc=~a count=~a stack=~a" #,current-ln count next-stack))
+                            (ick-err "E632")]
+                           [else
+                            (let ([target-pc (list-ref next-stack (- count 1))])
+                              (trace! 'resume (format "pc=~a count=~a target=~a stack-before=~a" #,current-ln count target-pc next-stack))
+                              (set! next-stack (drop next-stack count))
+                              (loop target-pc))]))]
+                    [((~datum forget) var)
+                     #`(let* ([count var]
+                              [drop-count (max 0 (min count (length next-stack)))])
+                         (trace! 'forget (format "pc=~a count=~a effective=~a stack-before=~a" #,current-ln count drop-count next-stack))
+                         (set! next-stack (drop next-stack drop-count))
+                         (loop (get-actual-next '#,lbl-val '#,next-ln-val)))]
+                    [_ #`(loop (get-actual-next '#,lbl-val '#,next-ln-val))]))
                 #`[(#,current-ln)
                    (let ([is-abstained? (hash-ref abstain-tbl #,current-ln #f)])
                      (if is-abstained?
                          (begin
                            ;; Skipped! Update state based on modifiers, and ALWAYS BROADCAST LABEL
+                           (trace! 'skip (format "pc=~a label=~a" #,current-ln '#,lbl-val))
                            #, (if (or is-once-val is-again-val) #`(update-state! #,current-ln) #`(void))
                           (loop (get-actual-next '#,lbl-val '#,next-ln-val)))
 
-                         (let ([roll (random 100)])
-                           (if (< roll #,pct-val)
-                               (begin
-                                 ;; Executed!
-                                 #,compiled-op
-                                 #, (if (or is-once-val is-again-val) #`(update-state! #,current-ln) #`(void))
-
-                                 #,(syntax-parse current-op
-                                     [((~datum give-up)) #`(apply values (reverse output-acc))]
-                                     [(~datum give-up)   #`(apply values (reverse output-acc))]
-                                     [((~datum next) target)
-                                      (let ([t (eval-label-target #'target)])
-                                        ;; NEXT directly branches to its target. It does not complete sequentially,
-                                        ;; therefore it cannot trigger COME FROM interception.
-                                        #`(loop (get-ln-for-lbl '#,t)))]
-
-                                     [((~datum resume) var)
-                                      #`(let ([count var])
-                                          (cond
-                                            ;; Attempting to RESUME 0 or RESUME past the stack causes the stack to rupture.
-                                            [(<= count 0) (ick-err "E632")]
-                                            [(> count (length next-stack)) (ick-err "E632")]
-                                            [else
-                                             ;; Branch to the oldest entry popped (the one deepest in the removed segment)
-                                             (let ([target-pc (list-ref next-stack (- count 1))])
-                                               (set! next-stack (drop next-stack count))
-                                               ;; RESUME transfers control explicitly, bypassing COME FROM interceptions.
-                                               (loop target-pc))]))]
-
-                                     [((~datum forget) var)
-                                      #`(let ([count var])
-                                          (cond
-                                            ;; FORGET 0 is a valid no-op, let execution naturally fall through.
-                                            [(<= count 0) (loop (get-actual-next '#,lbl-val '#,next-ln-val))]
-                                            ;; Attempting to FORGET past the stack causes the program to disappear into the black lagoon.
-                                            [(> count (length next-stack)) (ick-err "E123")]
-                                            [else
-                                             (set! next-stack (drop next-stack count))
-                                             ;; FORGET does not transfer control, it completes sequentially.
-                                             ;; Therefore, COME FROM checks (get-actual-next) are correctly applied here.
-                                             (loop (get-actual-next '#,lbl-val '#,next-ln-val))]))]
-
-                                     [_ #`(loop (get-actual-next '#,lbl-val '#,next-ln-val))]))
-
-                               (begin
-                                 ;; Failed execution chance. Acts as if it wasn't encountered (no update-state)
-                                 (loop (get-actual-next '#,lbl-val '#,next-ln-val)))))))]))
+                         #,(cond
+                             [(>= pct-val 100)
+                              #`(begin
+                                  #,compiled-op
+                                  #,(if (or is-once-val is-again-val) #`(update-state! #,current-ln) #`(void))
+                                  #,continue-stx)]
+                             [(<= pct-val 0)
+                              #`(begin
+                                  (trace! 'chance-skip (format "pc=~a pct=~a" #,current-ln #,pct-val))
+                                  (loop (get-actual-next '#,lbl-val '#,next-ln-val)))]
+                             [else
+                              #`(let ([roll (random 100)])
+                                  (if (< roll #,pct-val)
+                                      (begin
+                                        #,compiled-op
+                                        #,(if (or is-once-val is-again-val) #`(update-state! #,current-ln) #`(void))
+                                        #,continue-stx)
+                                      (begin
+                                        (trace! 'chance-skip (format "pc=~a pct=~a roll=~a" #,current-ln #,pct-val roll))
+                                        (loop (get-actual-next '#,lbl-val '#,next-ln-val)))))])))]))
 
             (cons branch (loop (cdr lns) (cdr lbls) (cdr pcts) (cdr is-onces) (cdr is-agains) (cdr operations)))])))
 
@@ -680,6 +687,12 @@
          (define output-acc '())
          (define next-stack '())
          (define ignore-tbl (make-hash))
+         (define debug? (sick-debug))
+
+         (define (trace! tag . xs)
+           (when debug?
+             (parameterize ([current-output-port (current-error-port)])
+               (apply fprintf (current-output-port) "[sick ~a] ~a\n" tag xs))))
 
          (define (#,(datum->syntax stx 'sub) arr . idxs)
            (intercal-array-ref* arr idxs))
@@ -738,12 +751,14 @@
                        natural-next-ln
                        (let ([chosen (list-ref active-hijackers (random (length active-hijackers)))])
                          ;; Hijackers count as executed, so they update state too!
+                         (trace! 'come-from (format "label=~a chosen=~a stack=~a" executed-lbl chosen next-stack))
                          (update-state! chosen)
                          chosen))))
                natural-next-ln))
 
          (define (run)
            (let loop ([pc #,(syntax-e (car (syntax->list #'(ln ...))))])
+             (trace! 'pc (format "pc=~a stack=~a" pc next-stack))
              (case pc
                #,@case-clauses
                [(#f) (ick-err "E633")]

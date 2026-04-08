@@ -59,6 +59,35 @@
   list)
  (list 3 2))
 
+(check-equal?
+ (call-with-values
+  (thunk
+   (sick-program
+    (10 (do (assign .RES (mesh 'V))))
+    (20 (do (next 40)))
+    (30 (please (give-up)))
+    (40 (do (forget .RES)))
+    (50 (please (give-up)))))
+  list)
+ '()
+ "FORGET saturates instead of erroring when asked to remove too many NEXT entries")
+
+(check-equal?
+ (call-with-values
+  (thunk
+   (sick-program
+    (10 (do (assign .ONE (mesh 'I))))
+    (20 (do (next 60)))
+    (30 (do (read-out (mesh 'I))))
+    (40 (please (give-up)))
+    (60 (do (next 90)))
+    (70 (do (read-out (mesh 'II))))
+    (80 (please (give-up)))
+    (90 (do (resume .ONE)))))
+  list)
+ (list 2)
+ "RESUME 1 returns to the most recent NEXT target")
+
 
 (check-equal?
  (call-with-values
