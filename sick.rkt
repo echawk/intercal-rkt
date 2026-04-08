@@ -322,6 +322,33 @@
    (let ([v (getenv "SICK_DEBUG")])
      (and v (not (member (string-downcase v) '("0" "false" "no" "")))))))
 
+(define (parse-debug-symbols env-name)
+  (define raw (getenv env-name))
+  (and raw
+       (not (string=? (string-trim raw) ""))
+       (for/list ([piece (in-list (string-split raw ","))])
+         (string->symbol (string-trim piece)))))
+
+(define (parse-debug-numbers env-name)
+  (define raw (getenv env-name))
+  (and raw
+       (not (string=? (string-trim raw) ""))
+       (for/list ([piece (in-list (string-split raw ","))]
+                  #:when (string->number (string-trim piece)))
+         (string->number (string-trim piece)))))
+
+(define sick-debug-vars
+  (make-parameter (parse-debug-symbols "SICK_DEBUG_VARS")))
+
+(define sick-debug-lines
+  (make-parameter (parse-debug-numbers "SICK_DEBUG_LINES")))
+
+(define sick-debug-history-limit
+  (make-parameter
+   (let ([raw (getenv "SICK_DEBUG_HISTORY")])
+     (or (and raw (string->number (string-trim raw)))
+         400))))
+
 (struct intercal-array (dimensions data) #:transparent)
 
 (define (make-intercal-array dims)
@@ -555,6 +582,14 @@
                    (syntax->list #'(lbl ...)))
          h))
 
+     (define ln->op-map
+       (let ([h (make-hash)])
+         (for-each (lambda (l-ln l-op)
+                     (hash-set! h (syntax-e l-ln) (syntax->datum l-op)))
+                   (syntax->list #'(ln ...))
+                   ops)
+         h))
+
      (define var-definitions
        (map (lambda (v)
               (define vid (datum->syntax stx v))
@@ -601,23 +636,35 @@
                       (define base-stx (datum->syntax stx base))
                       (define idx-stxs (map (lambda (idx) (datum->syntax stx idx)) idxs))
                       #`(unless (hash-ref ignore-tbl (quote #,base-stx) #f)
-                          (trace! 'assign (format "pc=~a target=~a idxs=~a value=~a" #,current-ln '#,base (list #,@idx-stxs) val))
+                          (trace! 'assign
+                                  (format "pc=~a target=~a idxs=~a value=~a" #,current-ln '#,base (list #,@idx-stxs) val)
+                                  #:line #,current-ln
+                                  #:var '#,base)
                           (intercal-array-set!* #,base-stx (list #,@idx-stxs) val))]
                      [(and var-str
                            (or (string-prefix? var-str "*") (string-prefix? var-str ",")))
-                      #`(unless (hash-ref ignore-tbl (quote var) #f)
-                          (trace! 'assign (format "pc=~a target=~a value=~a" #,current-ln 'var val))
+                     #`(unless (hash-ref ignore-tbl (quote var) #f)
+                          (trace! 'assign
+                                  (format "pc=~a target=~a value=~a" #,current-ln 'var val)
+                                  #:line #,current-ln
+                                  #:var 'var)
                           (set! var (make-intercal-array (list val))))]
                      [else
                       #`(unless (hash-ref ignore-tbl (quote var) #f)
-                          (trace! 'assign (format "pc=~a target=~a value=~a" #,current-ln '#,target-datum val))
+                          (trace! 'assign
+                                  (format "pc=~a target=~a value=~a" #,current-ln '#,target-datum val)
+                                  #:line #,current-ln
+                                  #:var '#,target-datum)
                           (set! var val))]))]
                 [((~datum stash) var ...)
                  #`(begin
                      #,@(map (lambda (v)
                                (let ([vstack (datum->syntax stx (string->symbol (string-append (symbol->string (syntax-e v)) "-stack")))])
                                  #`(begin
-                                     (trace! 'stash (format "pc=~a var=~a value=~a depth-before=~a" #,current-ln '#,(syntax-e v) #,v (length #,vstack)))
+                                     (trace! 'stash
+                                             (format "pc=~a var=~a value=~a depth-before=~a" #,current-ln '#,(syntax-e v) #,v (length #,vstack))
+                                             #:line #,current-ln
+                                             #:var '#,(syntax-e v))
                                      (set! #,vstack (cons #,v #,vstack)))))
                              (syntax->list #'(var ...))))]
                 [((~datum retrieve) var ...)
@@ -626,10 +673,16 @@
                                (let ([vstack (datum->syntax stx (string->symbol (string-append (symbol->string (syntax-e v)) "-stack")))])
                                  #`(begin
                                      (when (null? #,vstack)
-                                       (trace! 'retrieve-error (format "pc=~a var=~a depth-before=0" #,current-ln '#,(syntax-e v)))
-                                       (ick-err "E436"))
+                                       (trace! 'retrieve-error
+                                               (format "pc=~a var=~a depth-before=0" #,current-ln '#,(syntax-e v))
+                                               #:line #,current-ln
+                                               #:var '#,(syntax-e v))
+                                       (runtime-fail (ick-err "E436")))
                                      (let ([retrieved-val (car #,vstack)])
-                                       (trace! 'retrieve (format "pc=~a var=~a value=~a depth-before=~a" #,current-ln '#,(syntax-e v) retrieved-val (length #,vstack)))
+                                       (trace! 'retrieve
+                                               (format "pc=~a var=~a value=~a depth-before=~a" #,current-ln '#,(syntax-e v) retrieved-val (length #,vstack))
+                                               #:line #,current-ln
+                                               #:var '#,(syntax-e v))
                                        (set! #,vstack (cdr #,vstack))
                                        (unless (hash-ref ignore-tbl (quote #,v) #f)
                                          (set! #,v retrieved-val))))))
@@ -666,7 +719,9 @@
                             (set! var input-val)))]))]
                 [((~datum read-out) var)
                  #`(let ([v var])
-                     (trace! 'read-out (format "pc=~a value=~a" #,current-ln v))
+                     (trace! 'read-out
+                             (format "pc=~a value=~a" #,current-ln v)
+                             #:line #,current-ln)
                      (cond
                        [(or (vector? v) (intercal-array? v))
                         (write-array-output! v)
@@ -725,33 +780,33 @@
                     [(~datum give-up)   #`(apply values (reverse output-acc))]
                     [((~datum try-again))
                      #`(begin
-                         (trace! 'try-again (format "pc=~a -> ~a" #,current-ln #,first-ln))
+                         (trace! 'try-again (format "pc=~a -> ~a" #,current-ln #,first-ln) #:line #,current-ln)
                          (loop #,first-ln))]
                     [(~datum try-again)
                      #`(begin
-                         (trace! 'try-again (format "pc=~a -> ~a" #,current-ln #,first-ln))
+                         (trace! 'try-again (format "pc=~a -> ~a" #,current-ln #,first-ln) #:line #,current-ln)
                          (loop #,first-ln))]
                     [((~datum next) target)
                      (let ([t (eval-label-target #'target)])
                        #`(begin
-                           (trace! 'next (format "pc=~a target=~a stack=~a" #,current-ln '#,t next-stack))
+                           (trace! 'next (format "pc=~a target=~a stack=~a" #,current-ln '#,t next-stack) #:line #,current-ln)
                            (loop (get-ln-for-lbl '#,t))))]
                     [((~datum resume) var)
                      #`(let ([count var])
                          (cond
-                           [(<= count 0) (ick-err "E632")]
+                           [(<= count 0) (runtime-fail (ick-err "E632"))]
                            [(> count (length next-stack))
-                            (trace! 'resume-error (format "pc=~a count=~a stack=~a" #,current-ln count next-stack))
-                            (ick-err "E632")]
+                            (trace! 'resume-error (format "pc=~a count=~a stack=~a" #,current-ln count next-stack) #:line #,current-ln)
+                            (runtime-fail (ick-err "E632"))]
                            [else
                             (let ([target-pc (list-ref next-stack (- count 1))])
-                              (trace! 'resume (format "pc=~a count=~a target=~a stack-before=~a" #,current-ln count target-pc next-stack))
+                              (trace! 'resume (format "pc=~a count=~a target=~a stack-before=~a" #,current-ln count target-pc next-stack) #:line #,current-ln)
                               (set! next-stack (drop next-stack count))
                               (loop target-pc))]))]
                     [((~datum forget) var)
                      #`(let* ([count var]
                               [drop-count (max 0 (min count (length next-stack)))])
-                         (trace! 'forget (format "pc=~a count=~a effective=~a stack-before=~a" #,current-ln count drop-count next-stack))
+                         (trace! 'forget (format "pc=~a count=~a effective=~a stack-before=~a" #,current-ln count drop-count next-stack) #:line #,current-ln)
                          (set! next-stack (drop next-stack drop-count))
                          (loop (get-actual-next '#,lbl-val '#,next-ln-val)))]
                     [_ #`(loop (get-actual-next '#,lbl-val '#,next-ln-val))]))
@@ -764,7 +819,7 @@
                          #,continue-stx)]
                     [(<= pct-val 0)
                      #`(begin
-                         (trace! 'chance-skip (format "pc=~a pct=~a" #,current-ln #,pct-val))
+                         (trace! 'chance-skip (format "pc=~a pct=~a" #,current-ln #,pct-val) #:line #,current-ln)
                          #,natural-next-stx)]
                     [else
                      #`(let ([roll (random 100)])
@@ -774,7 +829,7 @@
                                #,(if (or is-once-val is-again-val) #`(update-state! #,current-ln) #`(void))
                                #,continue-stx)
                              (begin
-                               (trace! 'chance-skip (format "pc=~a pct=~a roll=~a" #,current-ln #,pct-val roll))
+                               (trace! 'chance-skip (format "pc=~a pct=~a roll=~a" #,current-ln #,pct-val roll) #:line #,current-ln)
                                #,natural-next-stx)))])
                   )
                 #`((#,current-ln)
@@ -783,7 +838,7 @@
                      (if is-abstained?
                          (begin
                            ;; Skipped! Update state based on modifiers, and ALWAYS BROADCAST LABEL
-                           (trace! 'skip (format "pc=~a label=~a abstain-count=~a" #,current-ln '#,lbl-val abstain-count))
+                           (trace! 'skip (format "pc=~a label=~a abstain-count=~a" #,current-ln '#,lbl-val abstain-count) #:line #,current-ln)
                            #,(if (or is-once-val is-again-val) #`(update-state! #,current-ln) #`(void))
                            #,natural-next-stx)
                          #,execute-stx))))
@@ -798,13 +853,49 @@
          (define next-stack '())
          (define ignore-tbl (make-hash))
          (define debug? (sick-debug))
+         (define debug-vars (sick-debug-vars))
+         (define debug-lines (sick-debug-lines))
+         (define debug-history-limit (sick-debug-history-limit))
          (define tape-last-in 0)
          (define tape-last-out 0)
+         (define recent-trace-events '())
 
-         (define (trace! tag . xs)
+         (define (remember-trace! line)
+           (set! recent-trace-events
+                 (let ([events (cons line recent-trace-events)]
+                       [limit (max 0 debug-history-limit)])
+                   (if (<= (length events) limit)
+                       events
+                       (take events limit)))))
+
+         (define (dump-recent-trace!)
            (when debug?
              (parameterize ([current-output-port (current-error-port)])
-               (apply fprintf (current-output-port) "[sick ~a] ~a\n" tag xs))))
+               (fprintf (current-output-port) "[sick backtrace] recent-events=~a\n"
+                        (length recent-trace-events))
+               (for ([line (in-list (reverse recent-trace-events))])
+                 (fprintf (current-output-port) "~a\n" line)))))
+
+         (define (tracked-line? maybe-line)
+           (or (not debug-lines)
+               (and maybe-line (member maybe-line debug-lines))))
+
+         (define (tracked-var? maybe-var)
+           (or (not debug-vars)
+               (and maybe-var (member maybe-var debug-vars))))
+
+         (define (trace! tag msg #:line [line #f] #:var [var #f])
+           (when debug?
+             (when (and (tracked-line? line)
+                        (tracked-var? var))
+               (define rendered (format "[sick ~a] ~a" tag msg))
+               (remember-trace! rendered)
+               (parameterize ([current-output-port (current-error-port)])
+                 (fprintf (current-output-port) "~a\n" rendered)))))
+
+         (define (runtime-fail msg)
+           (dump-recent-trace!)
+           (error msg))
 
          (define (#,(datum->syntax stx 'sub) arr . idxs)
            (intercal-array-ref* arr idxs))
@@ -852,6 +943,7 @@
          (define abstain-tbl (make-hash))
          (define gerund->lns-map '#,gerund->lns-map)
          (define give-up-line-set '#,give-up-lines)
+         (define ln->op-map '#,ln->op-map)
 
          #,@(filter-map (lambda (l-ln l-is-not)
                           #`(begin
@@ -904,16 +996,16 @@
          (define (abstain-line-once! target-ln)
            (unless (member target-ln give-up-line-set)
              (set-abstain-count! target-ln (max 1 (abstain-count target-ln))))
-           (trace! 'abstain (format "line=~a count=~a mode=once" target-ln (abstain-count target-ln))))
+           (trace! 'abstain (format "line=~a count=~a mode=once" target-ln (abstain-count target-ln)) #:line target-ln))
 
          (define (abstain-line-count! target-ln count)
            (set-abstain-count! target-ln (+ (abstain-count target-ln) (max 0 count)))
-           (trace! 'abstain (format "line=~a count=~a mode=count add=~a" target-ln (abstain-count target-ln) count)))
+           (trace! 'abstain (format "line=~a count=~a mode=count add=~a" target-ln (abstain-count target-ln) count) #:line target-ln))
 
          (define (reinstate-line-once! target-ln)
            (unless (member target-ln give-up-line-set)
              (set-abstain-count! target-ln (sub1 (abstain-count target-ln))))
-           (trace! 'reinstate (format "line=~a count=~a" target-ln (abstain-count target-ln))))
+           (trace! 'reinstate (format "line=~a count=~a" target-ln (abstain-count target-ln)) #:line target-ln))
 
          (define (abstain-gerunds! count gerunds)
            (for ([gerund (in-list gerunds)])
@@ -939,17 +1031,23 @@
                        natural-next-ln
                        (let ([chosen (list-ref active-hijackers (random (length active-hijackers)))])
                          ;; Hijackers count as executed, so they update state too!
-                         (trace! 'come-from (format "label=~a chosen=~a stack=~a" executed-lbl chosen next-stack))
+                         (trace! 'come-from (format "label=~a chosen=~a stack=~a" executed-lbl chosen next-stack) #:line chosen)
                          (update-state! chosen)
                          chosen))))
                natural-next-ln))
 
          (define (run)
            (let loop ([pc #,first-ln])
-             (trace! 'pc (format "pc=~a stack=~a" pc next-stack))
+             (trace! 'pc
+                     (format "pc=~a label=~a op=~s stack=~a"
+                             pc
+                             (hash-ref rt-ln->lbl-map pc '_)
+                             (hash-ref ln->op-map pc #f)
+                             next-stack)
+                     #:line pc)
              (case pc
                #,@case-clauses
-               [(#f) (ick-err "E633")]
+               [(#f) (runtime-fail (ick-err "E633"))]
                [else (error "Fell off graph! PC:" pc)])))
          (run))]))
 
