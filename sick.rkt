@@ -350,6 +350,9 @@
 (define sick-debug-lines
   (make-parameter (parse-debug-numbers "SICK_DEBUG_LINES")))
 
+(define sick-break-lines
+  (make-parameter (parse-debug-numbers "SICK_BREAK_LINES")))
+
 (define sick-debug-history-limit
   (make-parameter
    (let ([raw (getenv "SICK_DEBUG_HISTORY")])
@@ -894,6 +897,7 @@
          (define debug? (sick-debug))
          (define debug-vars (sick-debug-vars))
          (define debug-lines (sick-debug-lines))
+         (define break-lines (sick-break-lines))
          (define debug-history-limit (sick-debug-history-limit))
          (define tape-last-in 0)
          (define tape-last-out 0)
@@ -921,7 +925,8 @@
 
          (define (tracked-var? maybe-var)
            (or (not debug-vars)
-               (and maybe-var (member maybe-var debug-vars))))
+               (not maybe-var)
+               (member maybe-var debug-vars)))
 
          (define (trace! tag msg #:line [line #f] #:var [var #f])
            (when debug?
@@ -935,6 +940,11 @@
          (define (runtime-fail msg)
            (dump-recent-trace!)
            (error msg))
+
+         (define (breakpoint-line? maybe-line)
+           (and maybe-line
+                break-lines
+                (member maybe-line break-lines)))
 
          (define onespot-max #xffff)
          (define twospot-max #xffffffff)
@@ -1061,6 +1071,19 @@
                                   h))
          (define rt-ln->lbl-map '#,ln->lbl-map)
 
+         (define (debug-var-snapshots)
+           (filter values
+                   (list
+                    #,@(map (lambda (v)
+                              (let ([vid (datum->syntax stx v)]
+                                    [vstack (datum->syntax stx (string->symbol (string-append (symbol->string v) "-stack")))])
+                                #`(let ([sym '#,v])
+                                    (and (tracked-var? sym)
+                                         (list sym
+                                               #,vid
+                                               (length #,vstack))))))
+                            all-vars))))
+
          (define (get-ln-for-lbl target-lbl)
            (hash-ref lbl->ln-map
                      target-lbl
@@ -1122,6 +1145,21 @@
 
          (define (run)
            (let loop ([pc #,first-ln])
+             (when (breakpoint-line? pc)
+               (parameterize ([current-output-port (current-error-port)])
+                 (fprintf (current-output-port)
+                          "[sick breakpoint] pc=~a label=~a op=~s stack=~a\n"
+                          pc
+                          (hash-ref rt-ln->lbl-map pc '_)
+                          (hash-ref ln->op-map pc #f)
+                          next-stack)
+                 (for ([entry (in-list (debug-var-snapshots))])
+                   (match-let ([(list sym val depth) entry])
+                     (fprintf (current-output-port)
+                              "[sick breakpoint] var=~a value=~s stash-depth=~a\n"
+                              sym val depth))))
+               (dump-recent-trace!)
+               (error (format "SICK breakpoint at line ~a" pc)))
              (trace! 'pc
                      (format "pc=~a label=~a op=~s stack=~a"
                              pc
