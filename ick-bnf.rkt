@@ -23,6 +23,7 @@ op : assign
    | comefrom
    | readout
    | giveup
+   | tryagain
    | writein
    | stash
    | retrieve
@@ -44,8 +45,12 @@ gerund : CALCULATING
        | ABSTAINING
        | REINSTATING
        | NEXTING
-       | READING
-       | WRITING
+       | READING OUT
+       | WRITING IN
+       | TRYING AGAIN
+
+gerund-list : gerund
+            | gerund-list PLUS gerund
 
 assign : var GETS expr
        | var GETS dim-list
@@ -66,8 +71,10 @@ comefrom : COME FROM target
 
 readout : READ OUT expr
 giveup : GIVE UP
+tryagain : TRY AGAIN
 
 abstain-target : target
+               | gerund-list
 
 writein : WRITE IN var
 stash : STASH expr-list
@@ -76,6 +83,7 @@ forget : FORGET expr
 resume : RESUME expr
 
 abstain : ABSTAIN FROM abstain-target
+        | ABSTAIN expr FROM abstain-target
 reinstate : REINSTATE abstain-target
 nothing : NOTHING
 

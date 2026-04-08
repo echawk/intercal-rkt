@@ -183,6 +183,39 @@
     DO READ OUT .X
     PLEASE GIVE UP"))
 
+(test-case "gerund abstain and try again normalize"
+  (check-equal?
+   (norm* "(33) DO ABSTAIN #1 FROM STASHING + RETRIEVING + CALCULATING + ABSTAINING + READING OUT")
+   '(sick-program/syslib
+     (33 (do (abstain-gerunds (mesh 1)
+                              stashing
+                              retrieving
+                              calculating
+                              abstaining
+                              reading-out)))))
+  (check-equal?
+   (norm* "(33) DO ABSTAIN FROM STASHING + RETRIEVING + CALCULATING + ABSTAINING + READING OUT")
+   '(sick-program/syslib
+     (33 (do (abstain-gerunds-once
+              stashing
+              retrieving
+              calculating
+              abstaining
+              reading-out)))))
+  (check-equal?
+   (norm* "(1) DO REINSTATE STASHING + RETRIEVING + CALCULATING + ABSTAINING + READING OUT")
+   '(sick-program/syslib
+     (1 (do (reinstate-gerunds
+             stashing
+             retrieving
+             calculating
+             abstaining
+             reading-out)))))
+  (check-equal?
+   (norm* "PLEASE TRY AGAIN")
+   '(sick-program/syslib
+     (please (try-again)))))
+
 ;; ;; (test-case "unary binds tighter than SUB"
 ;; ;;   (norm* "10 DO .X <- & .A SUB 1"))
 

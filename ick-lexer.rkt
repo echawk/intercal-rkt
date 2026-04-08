@@ -11,6 +11,7 @@
     "NEXT"
     "READ" "OUT"
     "WRITE" "IN"
+    "TRY" "TRYING"
     "GIVE" "UP" "COME" "FROM"
     "NOTHING"
     ;; Gerunds.

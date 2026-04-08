@@ -31,7 +31,7 @@
   ;; 1. Matches lines that start with a VALID operation or variable assignment.
   ;; It ensures DO/PLEASE is immediately followed by a real command (STASH, etc) or a variable [.:,;]
   (define valid-start-rx
-    #px"^[ \t]*(?:\\([0-9]+\\)[ \t]*)?(?:(?:PLEASE|DO|NOT|MAYBE|%[0-9]+)[ \t]*)+(?:STASH|RETRIEVE|IGNORE|REMEMBER|ABSTAIN|REINSTATE|FORGET|RESUME|READ|WRITE|COME|GIVE|NOTHING|[.:,;]|\\()")
+    #px"^[ \t]*(?:\\([0-9]+\\)[ \t]*)?(?:(?:PLEASE|DO|NOT|MAYBE|%[0-9]+)[ \t]*)+(?:STASH|RETRIEVE|IGNORE|REMEMBER|ABSTAIN|REINSTATE|FORGET|RESUME|READ|WRITE|COME|GIVE|TRY|NOTHING|[.:,;]|\\()")
 
   ;; 2. Matches multi-line continuations.
   ;; These are indented continuation lines containing compact expression tokens
@@ -42,7 +42,7 @@
   ;; 3. Matches statement prefixes that are syntactically incomplete on their own,
   ;; but are expected to continue on the next indented line.
   (define incomplete-start-rx
-    #px"^(?:.*(?:<-|RESUME|FORGET|STASH|RETRIEVE|READ OUT|WRITE IN|ABSTAIN FROM|REINSTATE|SUB|BY|\\$|~|&|V|\\?|['\"]))[ \t]*$")
+    #px"^(?:.*(?:<-|RESUME|FORGET|STASH|RETRIEVE|READ OUT|WRITE IN|ABSTAIN(?: [^ ]+)? FROM|REINSTATE|SUB|BY|\\$|~|&|V|\\?|['\"]))[ \t]*$")
 
   (define cleaned-lines
     (filter values

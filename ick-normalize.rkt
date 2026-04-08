@@ -2,6 +2,32 @@
 
 (provide normalize-program)
 
+(define (normalize-gerund ast)
+  (match ast
+    [`(gerund "CALCULATING") 'calculating]
+    [`(gerund "FORGETTING") 'forgetting]
+    [`(gerund "RESUMING") 'resuming]
+    [`(gerund "STASHING") 'stashing]
+    [`(gerund "RETRIEVING") 'retrieving]
+    [`(gerund "IGNORING") 'ignoring]
+    [`(gerund "REMEMBERING") 'remembering]
+    [`(gerund "ABSTAINING") 'abstaining]
+    [`(gerund "REINSTATING") 'reinstating]
+    [`(gerund "NEXTING") 'nexting]
+    [`(gerund "READING" "OUT") 'reading-out]
+    [`(gerund "WRITING" "IN") 'writing-in]
+    [`(gerund "TRYING" "AGAIN") 'trying-again]
+    [_ (error "Unknown gerund shape:" ast)]))
+
+(define (extract-gerunds ast)
+  (match ast
+    [`(gerund-list ,g) (list (normalize-gerund g))]
+    [`(gerund-list ,rest "+" ,g)
+     (append (extract-gerunds rest)
+             (list (normalize-gerund g)))]
+    [`(gerund ,_ ...) (list (normalize-gerund ast))]
+    [_ (error "Unknown gerund list shape:" ast)]))
+
 (define (normalize-subscript-chain base subs)
   `(sub ,(normalize-expr base) ,@subs))
 
@@ -152,13 +178,25 @@
      `(resume ,(normalize-expr expr))]
 
     [`(op (abstain "ABSTAIN" "FROM" (abstain-target ,tgt)))
-     `(abstain ,(normalize-expr tgt))]
+     (if (and (list? tgt) (eq? (car tgt) 'gerund-list))
+         `(abstain-gerunds-once ,@(extract-gerunds tgt))
+         `(abstain ,(normalize-expr tgt)))]
+
+    [`(op (abstain "ABSTAIN" ,expr "FROM" (abstain-target ,tgt)))
+     (if (and (list? tgt) (eq? (car tgt) 'gerund-list))
+         `(abstain-gerunds ,(normalize-expr expr) ,@(extract-gerunds tgt))
+         `(abstain-count ,(normalize-expr expr) ,(normalize-expr tgt)))]
 
     [`(op (reinstate "REINSTATE" (abstain-target ,tgt)))
-     `(reinstate ,(normalize-expr tgt))]
+     (if (and (list? tgt) (eq? (car tgt) 'gerund-list))
+         `(reinstate-gerunds ,@(extract-gerunds tgt))
+         `(reinstate ,(normalize-expr tgt)))]
 
     [`(op (giveup "GIVE" "UP"))
      `(give-up)]
+
+    [`(op (tryagain "TRY" "AGAIN"))
+     `(try-again)]
 
     [`(op (nothing "NOTHING"))
      `(nothing)]
