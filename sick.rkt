@@ -1146,21 +1146,6 @@
      ;; What the fuck racket.
      (define (clean-intercal-string str)
        (define lines (string-split str "\n"))
-       (define token-rx
-         #px"\\(|\\)|<-|~|\\$|#|\\+|\\.|:|\\*|,|;|&|\\?|V|!|%|'|\"|[0-9]+|[A-Za-z]+")
-
-       (define (parseable-line-prefix line)
-         (define tokens
-           (regexp-match*
-            token-rx
-            (string-replace
-             (string-replace line "!" "'.")
-             "DON'T" "DO NOT")))
-         (for/or ([n (in-range (length tokens) 0 -1)])
-           (define candidate (string-join (take tokens n) " "))
-           (with-handlers ([exn:fail? (lambda (_) #f)])
-             (parse (tokenize (open-input-string candidate)))
-             candidate)))
 
        ;; 1. Matches lines that start with a VALID operation or variable assignment.
        ;; It ensures DO/PLEASE is immediately followed by a real command (STASH, etc) or a variable [.:,;]
@@ -1168,50 +1153,58 @@
          #px"^[ \t]*(?:\\([0-9]+\\)[ \t]*)?(?:(?:PLEASE|DO|NOT|MAYBE|%[0-9]+)[ \t]*)+(?:STASH|RETRIEVE|IGNORE|REMEMBER|ABSTAIN|REINSTATE|FORGET|RESUME|READ|WRITE|COME|GIVE|TRY|NOTHING|[.:,;]|\\()")
 
        ;; 2. Matches multi-line continuations.
-       ;; These are indented continuation lines containing compact expression tokens
-       ;; (including SUB) but no free-form prose spacing.
+       ;; These are indented lines containing ONLY valid INTERCAL math/logic symbols, quotes, and numbers.
+       ;; This cleanly catches wrapped math while rejecting "DOUBLE OR SINGLE PRECISION OVERFLOW"
        (define continuation-rx
-         #px"^[ \t]+[\"'?&V!#0-9.:,;~$A-Za-z]+$")
-
-       ;; 3. Matches statement prefixes that are syntactically incomplete on their own,
-       ;; but are expected to continue on the next indented line.
-       (define incomplete-start-rx
-         #px"^(?:.*(?:<-|RESUME|FORGET|STASH|RETRIEVE|READ OUT|WRITE IN|ABSTAIN(?: [^ ]+)? FROM|REINSTATE|SUB|BY|\\$|~|&|V|\\?|['\"]))[ \t]*$")
+         #px"^[ \t]+[\"'?&V!#0-9.:,~$\\s+-]+$")
 
        (define cleaned-lines
-         (filter values
-                 (map (lambda (l)
-                        (cond
-                          [(regexp-match? valid-start-rx l)
-                           (if (regexp-match? incomplete-start-rx l)
-                               l
-                               (parseable-line-prefix l))]
-                          [(regexp-match? continuation-rx l) l]
-                          [else #f]))
-                      lines)))
+         (filter (lambda (l)
+                   (or (regexp-match? valid-start-rx l)
+                       (regexp-match? continuation-rx l)))
+                 lines))
 
        (string-join cleaned-lines "\n"))
 
      ;; 1. Get raw user AST
      (define raw-user-ast (syntax->datum #'(sick-line ...)))
 
-     (define (collect-integers datum)
-       (cond
-         [(integer? datum) (list datum)]
-         [(pair? datum) (append (collect-integers (car datum))
-                                (collect-integers (cdr datum)))]
-         [(vector? datum) (apply append (map collect-integers (vector->list datum)))]
-         [else '()]))
-
      (define user-defined-labels
        (for/list ([line (in-list raw-user-ast)]
                   #:when (and (pair? line) (integer? (car line))))
          (car line)))
 
-     (define user-integers (remove-duplicates (collect-integers raw-user-ast)))
+     (define (collect-label-targets datum)
+       (match datum
+         [`(next ,(? integer? n)) (list n)]
+         [`(next (mesh ,(? integer? n))) (list n)]
+         [`(next ,expr) (collect-label-targets expr)]
+         [`(come-from ,(? integer? n)) (list n)]
+         [`(come-from (mesh ,(? integer? n))) (list n)]
+         [`(come-from ,expr) (collect-label-targets expr)]
+         [`(abstain ,(? integer? n)) (list n)]
+         [`(abstain (mesh ,(? integer? n))) (list n)]
+         [`(abstain ,expr) (collect-label-targets expr)]
+         [`(abstain-count ,_ ,(? integer? n)) (list n)]
+         [`(abstain-count ,_ (mesh ,(? integer? n))) (list n)]
+         [`(abstain-count ,_ ,expr) (collect-label-targets expr)]
+         [`(reinstate ,(? integer? n)) (list n)]
+         [`(reinstate (mesh ,(? integer? n))) (list n)]
+         [`(reinstate ,expr) (collect-label-targets expr)]
+         [`(% ,_ ,inner) (collect-label-targets inner)]
+         [`(please ,inner) (collect-label-targets inner)]
+         [`(do ,inner) (collect-label-targets inner)]
+         [`(not ,inner) (collect-label-targets inner)]
+         [`(once ,inner) (collect-label-targets inner)]
+         [`(again ,inner) (collect-label-targets inner)]
+         [(list elems ...) (apply append (map collect-label-targets elems))]
+         [_ '()]))
+
+     (define referenced-label-targets
+       (remove-duplicates (collect-label-targets raw-user-ast)))
 
      (define (library-needed? lo hi)
-       (for/or ([n (in-list user-integers)])
+       (for/or ([n (in-list referenced-label-targets)])
          (and (<= lo n hi)
               (not (member n user-defined-labels)))))
 
