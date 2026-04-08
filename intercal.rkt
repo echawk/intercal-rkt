@@ -15,6 +15,8 @@
   (define token-rx
     #px"\\(|\\)|<-|~|\\$|#|\\+|\\.|:|\\*|,|&|\\?|V|!|%|'|\"|[0-9]+|[A-Za-z]+")
 
+  (define prefix-tokens '("PLEASE" "DO" "NOT" "MAYBE" "%" "DON'T"))
+
   (define (parseable-line-prefix line)
     (define tokens
       (regexp-match*
@@ -28,10 +30,42 @@
         (parse (tokenize (open-input-string candidate)))
         candidate)))
 
+  (define (fallback-nothing-line line)
+    (define tokens
+      (regexp-match*
+       token-rx
+       (string-replace
+        (string-replace line "!" "'.")
+        "DON'T" "DO NOT")))
+    (define-values (label-prefix rest)
+      (if (and (>= (length tokens) 3)
+               (equal? (list-ref tokens 0) "(")
+               (regexp-match? #px"^[0-9]+$" (list-ref tokens 1))
+               (equal? (list-ref tokens 2) ")"))
+          (values (take tokens 3) (drop tokens 3))
+          (values '() tokens)))
+    (define prefix-only
+      (let loop ([ts rest] [acc '()])
+        (cond
+          [(null? ts) (reverse acc)]
+          [(equal? (car ts) "%")
+           (if (and (pair? (cdr ts))
+                    (regexp-match? #px"^[0-9]+$" (cadr ts)))
+               (loop (cddr ts) (cons (cadr ts) (cons "%" acc)))
+               (reverse acc))]
+          [(member (car ts) prefix-tokens)
+           (loop (cdr ts) (cons (car ts) acc))]
+          [else (reverse acc)])))
+    (and (pair? prefix-only)
+         (string-join (append label-prefix prefix-only '("NOTHING")) " ")))
+
   ;; 1. Matches lines that start with a VALID operation or variable assignment.
   ;; It ensures DO/PLEASE is immediately followed by a real command (STASH, etc) or a variable [.:,;]
   (define valid-start-rx
-    #px"^[ \t]*(?:\\([0-9]+\\)[ \t]*)?(?:(?:PLEASE|DO|NOT|MAYBE|%[0-9]+)[ \t]*)+(?:STASH|RETRIEVE|IGNORE|REMEMBER|ABSTAIN|REINSTATE|FORGET|RESUME|READ|WRITE|COME|GIVE|TRY|NOTHING|[.:,;]|\\()")
+    #px"^[ \t]*(?:\\([0-9]+\\)[ \t]*)?(?:(?:PLEASE|DO|NOT|DON'T|MAYBE|%[0-9]+)[ \t]*)+(?:STASH|RETRIEVE|IGNORE|REMEMBER|ABSTAIN|REINSTATE|FORGET|RESUME|READ|WRITE|COME|GIVE|TRY|NOTHING|[.:,;]|\\()")
+
+  (define prefix-start-rx
+    #px"^[ \t]*(?:\\([0-9]+\\)[ \t]*)?(?:(?:PLEASE|DO|NOT|DON'T|MAYBE|%[0-9]+)[ \t]*)+")
 
   ;; 2. Matches multi-line continuations.
   ;; These are indented continuation lines containing compact expression tokens
@@ -52,6 +86,9 @@
                            (if (regexp-match? incomplete-start-rx l)
                                l
                                (parseable-line-prefix l))]
+                          [(regexp-match? prefix-start-rx l)
+                           (or (parseable-line-prefix l)
+                               (fallback-nothing-line l))]
                           [(regexp-match? continuation-rx l) l]
                           [else #f]))
                  lines)))

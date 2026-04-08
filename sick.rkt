@@ -307,12 +307,18 @@
     (let ([result-bits (map op-proc bits rotated-bits)])
       (bits->int result-bits))))
 
+(define onespot-limit #xffff)
 
-(define (mingle a b) (intercal-mingle a b 16))
-(define (select a b) (intercal-select a b 16))
-(define (unary-and val) (intercal-unary bitwise-and val 16))
-(define (unary-or val)  (intercal-unary bitwise-ior val 16))
-(define (unary-xor val) (intercal-unary bitwise-xor val 16))
+(define (infer-width . vals)
+  (if (ormap (lambda (v) (and (exact-integer? v) (> v onespot-limit))) vals)
+      32
+      16))
+
+(define (mingle a b) (intercal-mingle a b (infer-width a b)))
+(define (select a b) (intercal-select a b (infer-width a b)))
+(define (unary-and val) (intercal-unary bitwise-and val (infer-width val)))
+(define (unary-or val)  (intercal-unary bitwise-ior val (infer-width val)))
+(define (unary-xor val) (intercal-unary bitwise-xor val (infer-width val)))
 
 
 
@@ -1056,10 +1062,14 @@
          (define rt-ln->lbl-map '#,ln->lbl-map)
 
          (define (get-ln-for-lbl target-lbl)
-           (hash-ref lbl->ln-map target-lbl (lambda () (ick-err "E129"))))
+           (hash-ref lbl->ln-map
+                     target-lbl
+                     (lambda () (runtime-fail (ick-err "E129")))))
 
          (define (get-abstain-ln-for-lbl target-lbl)
-           (hash-ref lbl->ln-map target-lbl (lambda () (ick-err "E139"))))
+           (hash-ref lbl->ln-map
+                     target-lbl
+                     (lambda () (runtime-fail (ick-err "E139")))))
 
          (define (abstain-count target-ln)
            (hash-ref abstain-tbl target-ln 0))
@@ -1122,7 +1132,7 @@
              (case pc
                #,@case-clauses
                [(#f) (runtime-fail (ick-err "E633"))]
-               [else (error "Fell off graph! PC:" pc)])))
+               [else (runtime-fail (format "Fell off graph! PC: ~a" pc))])))
          (run))]))
 
 (define-syntax (sick-program stx)
@@ -1150,7 +1160,7 @@
        ;; 1. Matches lines that start with a VALID operation or variable assignment.
        ;; It ensures DO/PLEASE is immediately followed by a real command (STASH, etc) or a variable [.:,;]
        (define valid-start-rx
-         #px"^[ \t]*(?:\\([0-9]+\\)[ \t]*)?(?:(?:PLEASE|DO|NOT|MAYBE|%[0-9]+)[ \t]*)+(?:STASH|RETRIEVE|IGNORE|REMEMBER|ABSTAIN|REINSTATE|FORGET|RESUME|READ|WRITE|COME|GIVE|TRY|NOTHING|[.:,;]|\\()")
+         #px"^[ \t]*(?:\\([0-9]+\\)[ \t]*)?(?:(?:PLEASE|DO|NOT|DON'T|MAYBE|%[0-9]+)[ \t]*)+(?:STASH|RETRIEVE|IGNORE|REMEMBER|ABSTAIN|REINSTATE|FORGET|RESUME|READ|WRITE|COME|GIVE|TRY|NOTHING|[.:,;]|\\()")
 
        ;; 2. Matches multi-line continuations.
        ;; These are indented lines containing ONLY valid INTERCAL math/logic symbols, quotes, and numbers.
@@ -1166,6 +1176,83 @@
 
        (string-join cleaned-lines "\n"))
 
+     (define (clean-intercal-string/smart str)
+       (define lines (string-split str "\n"))
+       (define token-rx
+         #px"\\(|\\)|<-|~|\\$|#|\\+|\\.|:|\\*|,|;|&|\\?|V|!|%|'|\"|[0-9]+|[A-Za-z]+")
+       (define prefix-tokens '("PLEASE" "DO" "NOT" "MAYBE" "%" "DON'T"))
+
+       (define (parseable-line-prefix line)
+         (define tokens
+           (regexp-match*
+            token-rx
+            (string-replace
+             (string-replace line "!" "'.")
+             "DON'T" "DO NOT")))
+         (for/or ([n (in-range (length tokens) 0 -1)])
+           (define candidate (string-join (take tokens n) " "))
+           (with-handlers ([exn:fail? (lambda (_) #f)])
+             (parse (tokenize (open-input-string candidate)))
+             candidate)))
+
+       (define (fallback-nothing-line line)
+         (define tokens
+           (regexp-match*
+            token-rx
+            (string-replace
+             (string-replace line "!" "'.")
+             "DON'T" "DO NOT")))
+         (define-values (label-prefix rest)
+           (if (and (>= (length tokens) 3)
+                    (equal? (list-ref tokens 0) "(")
+                    (regexp-match? #px"^[0-9]+$" (list-ref tokens 1))
+                    (equal? (list-ref tokens 2) ")"))
+               (values (take tokens 3) (drop tokens 3))
+               (values '() tokens)))
+         (define prefix-only
+           (let loop ([ts rest] [acc '()])
+             (cond
+               [(null? ts) (reverse acc)]
+               [(equal? (car ts) "%")
+                (if (and (pair? (cdr ts))
+                         (regexp-match? #px"^[0-9]+$" (cadr ts)))
+                    (loop (cddr ts) (cons (cadr ts) (cons "%" acc)))
+                    (reverse acc))]
+               [(member (car ts) prefix-tokens)
+                (loop (cdr ts) (cons (car ts) acc))]
+               [else (reverse acc)])))
+         (and (pair? prefix-only)
+              (string-join (append label-prefix prefix-only '("NOTHING")) " ")))
+
+       (define valid-start-rx
+         #px"^[ \t]*(?:\\([0-9]+\\)[ \t]*)?(?:(?:PLEASE|DO|NOT|DON'T|MAYBE|%[0-9]+)[ \t]*)+(?:STASH|RETRIEVE|IGNORE|REMEMBER|ABSTAIN|REINSTATE|FORGET|RESUME|READ|WRITE|COME|GIVE|TRY|NOTHING|[.:,;]|\\()")
+
+       (define prefix-start-rx
+         #px"^[ \t]*(?:\\([0-9]+\\)[ \t]*)?(?:(?:PLEASE|DO|NOT|DON'T|MAYBE|%[0-9]+)[ \t]*)+")
+
+       (define continuation-rx
+         #px"^[ \t]+[\"'?&V!#0-9.:,;~$A-Za-z]+$")
+
+       (define incomplete-start-rx
+         #px"^(?:.*(?:<-|RESUME|FORGET|STASH|RETRIEVE|READ OUT|WRITE IN|ABSTAIN(?: [^ ]+)? FROM|REINSTATE|SUB|BY|\\$|~|&|V|\\?|['\"]))[ \t]*$")
+
+       (define cleaned-lines
+         (filter values
+                 (map (lambda (l)
+                        (cond
+                          [(regexp-match? valid-start-rx l)
+                           (if (regexp-match? incomplete-start-rx l)
+                               l
+                               (parseable-line-prefix l))]
+                          [(regexp-match? prefix-start-rx l)
+                           (or (parseable-line-prefix l)
+                               (fallback-nothing-line l))]
+                          [(regexp-match? continuation-rx l) l]
+                          [else #f]))
+                      lines)))
+
+       (string-join cleaned-lines "\n"))
+
      ;; 1. Get raw user AST
      (define raw-user-ast (syntax->datum #'(sick-line ...)))
 
@@ -1174,34 +1261,37 @@
                   #:when (and (pair? line) (integer? (car line))))
          (car line)))
 
-     (define (collect-label-targets datum)
-       (match datum
-         [`(next ,(? integer? n)) (list n)]
-         [`(next (mesh ,(? integer? n))) (list n)]
-         [`(next ,expr) (collect-label-targets expr)]
-         [`(come-from ,(? integer? n)) (list n)]
-         [`(come-from (mesh ,(? integer? n))) (list n)]
-         [`(come-from ,expr) (collect-label-targets expr)]
-         [`(abstain ,(? integer? n)) (list n)]
-         [`(abstain (mesh ,(? integer? n))) (list n)]
-         [`(abstain ,expr) (collect-label-targets expr)]
-         [`(abstain-count ,_ ,(? integer? n)) (list n)]
-         [`(abstain-count ,_ (mesh ,(? integer? n))) (list n)]
-         [`(abstain-count ,_ ,expr) (collect-label-targets expr)]
-         [`(reinstate ,(? integer? n)) (list n)]
-         [`(reinstate (mesh ,(? integer? n))) (list n)]
-         [`(reinstate ,expr) (collect-label-targets expr)]
-         [`(% ,_ ,inner) (collect-label-targets inner)]
-         [`(please ,inner) (collect-label-targets inner)]
-         [`(do ,inner) (collect-label-targets inner)]
-         [`(not ,inner) (collect-label-targets inner)]
-         [`(once ,inner) (collect-label-targets inner)]
-         [`(again ,inner) (collect-label-targets inner)]
-         [(list elems ...) (apply append (map collect-label-targets elems))]
+     (define user-library-labels
+       (filter (lambda (n) (<= 5000 n 5999)) user-defined-labels))
+
+     (define (target->label target)
+       (match target
+         [(? integer? n) n]
+         [`(mesh ,(? integer? n)) n]
+         [_ #f]))
+
+     (define (statement-label-targets stmt)
+       (match stmt
+         [`(% ,_ ,inner) (statement-label-targets inner)]
+         [`(please ,inner) (statement-label-targets inner)]
+         [`(do ,inner) (statement-label-targets inner)]
+         [`(not ,inner) (statement-label-targets inner)]
+         [`(once ,inner) (statement-label-targets inner)]
+         [`(again ,inner) (statement-label-targets inner)]
+         [`(next ,target) (filter values (list (target->label target)))]
+         [`(come-from ,target) (filter values (list (target->label target)))]
+         [`(abstain ,target) (filter values (list (target->label target)))]
+         [`(abstain-count ,_ ,target) (filter values (list (target->label target)))]
+         [`(reinstate ,target) (filter values (list (target->label target)))]
          [_ '()]))
 
      (define referenced-label-targets
-       (remove-duplicates (collect-label-targets raw-user-ast)))
+       (remove-duplicates
+        (append*
+         (for/list ([line (in-list raw-user-ast)])
+           (match line
+             [`(,(? integer? _) ,stmt) (statement-label-targets stmt)]
+             [stmt (statement-label-targets stmt)])))))
 
      (define (library-needed? lo hi)
        (for/or ([n (in-list referenced-label-targets)])
@@ -1209,13 +1299,19 @@
               (not (member n user-defined-labels)))))
 
      (define (load-library-ast path)
+       (define cleaned-source
+         (if (regexp-match? #px"floatlib\\.i$" path)
+             (clean-intercal-string/smart (file->string path))
+             (clean-intercal-string (file->string path))))
+       (define parsed-ast
+         (with-handlers ([exn:fail?
+                          (lambda (e)
+                            (error (format "Failed to parse library ~a: ~a"
+                                           path
+                                           (exn-message e))))])
+           (parse (tokenize (open-input-string cleaned-source)))))
        (define full-ast
-         (normalize-program
-          (syntax->datum
-           (parse
-            (tokenize
-             (open-input-string
-              (clean-intercal-string (file->string path))))))))
+         (normalize-program (syntax->datum parsed-ast)))
        (if (and (list? full-ast) (symbol? (car full-ast)))
            (cdr full-ast)
            full-ast))
@@ -1223,7 +1319,8 @@
      ;; 2. Parse syslib to raw AST
      (define syslib-ast (load-library-ast "syslib.i"))
      (define floatlib-ast
-       (if (and (file-exists? "floatlib.i")
+       (if (and (null? user-library-labels)
+                (file-exists? "floatlib.i")
                 (library-needed? 5000 5999))
            (load-library-ast "floatlib.i")
            '()))
