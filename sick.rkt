@@ -314,6 +314,16 @@
       32
       16))
 
+(define (mingle-16 a b) (intercal-mingle a b 16))
+(define (select-16 a b) (intercal-select a b 16))
+(define (select-32 a b) (intercal-select a b 32))
+(define (unary-and-16 val) (intercal-unary bitwise-and val 16))
+(define (unary-and-32 val) (intercal-unary bitwise-and val 32))
+(define (unary-or-16 val)  (intercal-unary bitwise-ior val 16))
+(define (unary-or-32 val)  (intercal-unary bitwise-ior val 32))
+(define (unary-xor-16 val) (intercal-unary bitwise-xor val 16))
+(define (unary-xor-32 val) (intercal-unary bitwise-xor val 32))
+
 (define (mingle a b) (intercal-mingle a b (infer-width a b)))
 (define (select a b) (intercal-select a b (infer-width a b)))
 (define (unary-and val) (intercal-unary bitwise-and val (infer-width val)))
@@ -352,6 +362,66 @@
 
 (define sick-break-lines
   (make-parameter (parse-debug-numbers "SICK_BREAK_LINES")))
+
+(define (parse-debug-subspecs env-name)
+  (define raw (getenv env-name))
+  (and raw
+       (not (string=? (string-trim raw) ""))
+       (for/list ([piece (in-list (string-split raw ";"))]
+                  #:when (not (string=? (string-trim piece) "")))
+         (let* ([parts (map string-trim (string-split piece ":"))]
+                [parsed (map (lambda (part)
+                               (or (and (regexp-match? #px"^-?[0-9]+$" part)
+                                        (string->number part))
+                                   (string->symbol part)))
+                             parts)])
+           (unless (and (pair? parsed) (symbol? (car parsed)))
+             (error "Invalid SICK_DEBUG_SUBS entry"))
+           parsed))))
+
+(define sick-debug-subs
+  (make-parameter (parse-debug-subspecs "SICK_DEBUG_SUBS")))
+
+(define (parse-debug-node-roots env-name)
+  (define raw (getenv env-name))
+  (and raw
+       (not (string=? (string-trim raw) ""))
+       (for/list ([piece (in-list (string-split raw ";"))]
+                  #:when (not (string=? (string-trim piece) "")))
+         (let ([parts (map string-trim (string-split piece ":"))])
+           (unless (= (length parts) 2)
+             (error "Invalid SICK_DEBUG_NODES entry"))
+           (map (lambda (part)
+                  (or (and (regexp-match? #px"^-?[0-9]+$" part)
+                           (string->number part))
+                      (string->symbol part)))
+                parts)))))
+
+(define sick-debug-node-roots
+  (make-parameter (parse-debug-node-roots "SICK_DEBUG_NODES")))
+
+(define sick-debug-node-depth
+  (make-parameter
+   (let ([raw (getenv "SICK_DEBUG_NODE_DEPTH")])
+     (or (and raw
+              (regexp-match? #px"^[0-9]+$" (string-trim raw))
+              (string->number (string-trim raw)))
+         3))))
+
+(define sick-break-hit
+  (make-parameter
+   (let ([raw (getenv "SICK_BREAK_HIT")])
+     (or (and raw
+              (regexp-match? #px"^[0-9]+$" (string-trim raw))
+              (string->number (string-trim raw)))
+         1))))
+
+(define sick-max-steps
+  (make-parameter
+   (let ([raw (getenv "SICK_MAX_STEPS")])
+     (and raw
+          (regexp-match? #px"^[0-9]+$" (string-trim raw))
+          (string->number (string-trim raw))))))
 
 (define sick-debug-history-limit
   (make-parameter
@@ -523,9 +593,71 @@
      (map flatten-sub-datum elems)]
     [_ datum]))
 
+(define-for-syntax (symbol-width sym)
+  (define str (and (symbol? sym) (symbol->string sym)))
+  (cond
+    [(not str) 16]
+    [(or (string-prefix? str ":")
+         (string-prefix? str ";"))
+     32]
+    [else 16]))
+
+(define-for-syntax (expr-width datum)
+  (match datum
+    [`(mesh ,_) 16]
+    [`(mingle ,_ ,_) 32]
+    [`(mingle-16 ,_ ,_) 32]
+    [`(select ,_ ,rhs) (expr-width rhs)]
+    [`(select-16 ,_ ,_) 16]
+    [`(select-32 ,_ ,_) 32]
+    [`(unary-and ,rhs) (expr-width rhs)]
+    [`(unary-or ,rhs) (expr-width rhs)]
+    [`(unary-xor ,rhs) (expr-width rhs)]
+    [`(unary-and-16 ,_) 16]
+    [`(unary-and-32 ,_) 32]
+    [`(unary-or-16 ,_) 16]
+    [`(unary-or-32 ,_) 32]
+    [`(unary-xor-16 ,_) 16]
+    [`(unary-xor-32 ,_) 32]
+    [`(sub ,base ,_ ...) (expr-width base)]
+    [(? symbol? sym) (symbol-width sym)]
+    [_ 16]))
+
+(define-for-syntax (rewrite-width-aware-ops datum)
+  (match datum
+    [`(mingle ,lhs ,rhs)
+     `(mingle-16
+       ,(rewrite-width-aware-ops lhs)
+       ,(rewrite-width-aware-ops rhs))]
+    [`(select ,lhs ,rhs)
+     (define rewritten-rhs (rewrite-width-aware-ops rhs))
+     (define width (expr-width rewritten-rhs))
+     `(,(if (= width 32) 'select-32 'select-16)
+       ,(rewrite-width-aware-ops lhs)
+       ,rewritten-rhs)]
+    [`(unary-and ,rhs)
+     (define rewritten-rhs (rewrite-width-aware-ops rhs))
+     `(,(if (= (expr-width rewritten-rhs) 32) 'unary-and-32 'unary-and-16)
+       ,rewritten-rhs)]
+    [`(unary-or ,rhs)
+     (define rewritten-rhs (rewrite-width-aware-ops rhs))
+     `(,(if (= (expr-width rewritten-rhs) 32) 'unary-or-32 'unary-or-16)
+       ,rewritten-rhs)]
+    [`(unary-xor ,rhs)
+     (define rewritten-rhs (rewrite-width-aware-ops rhs))
+     `(,(if (= (expr-width rewritten-rhs) 32) 'unary-xor-32 'unary-xor-16)
+       ,rewritten-rhs)]
+    [`(sub ,base ,idxs ...)
+     `(sub ,(rewrite-width-aware-ops base)
+           ,@(map rewrite-width-aware-ops idxs))]
+    [(list elems ...)
+     (map rewrite-width-aware-ops elems)]
+    [_ datum]))
+
 (define-for-syntax (flatten-sub-stx stx)
   (datum->syntax stx
-                 (flatten-sub-datum (syntax->datum stx))
+                 (rewrite-width-aware-ops
+                  (flatten-sub-datum (syntax->datum stx)))
                  stx
                  stx))
 
@@ -898,10 +1030,17 @@
          (define debug-vars (sick-debug-vars))
          (define debug-lines (sick-debug-lines))
          (define break-lines (sick-break-lines))
+         (define debug-subs (sick-debug-subs))
+         (define debug-node-roots (sick-debug-node-roots))
+         (define debug-node-depth (sick-debug-node-depth))
+         (define break-hit-target (max 1 (sick-break-hit)))
+         (define max-steps (sick-max-steps))
          (define debug-history-limit (sick-debug-history-limit))
          (define tape-last-in 0)
          (define tape-last-out 0)
          (define recent-trace-events '())
+         (define breakpoint-hit-counts (make-hash))
+         (define step-count 0)
 
          (define (remember-trace! line)
            (set! recent-trace-events
@@ -941,10 +1080,28 @@
            (dump-recent-trace!)
            (error msg))
 
+         (define (check-step-limit! pc)
+           (when max-steps
+             (set! step-count (add1 step-count))
+             (when (> step-count max-steps)
+               (parameterize ([current-output-port (current-error-port)])
+                 (fprintf (current-output-port)
+                          "[sick limit] max-steps=~a reached at pc=~a label=~a op=~s stack=~a\n"
+                          max-steps
+                          pc
+                          (hash-ref rt-ln->lbl-map pc '_)
+                          (hash-ref ln->op-map pc #f)
+                          next-stack))
+               (dump-recent-trace!)
+               (error (format "SICK max steps reached at line ~a" pc)))))
+
          (define (breakpoint-line? maybe-line)
            (and maybe-line
                 break-lines
-                (member maybe-line break-lines)))
+                (member maybe-line break-lines)
+                (let ([hit-count (add1 (hash-ref breakpoint-hit-counts maybe-line 0))])
+                  (hash-set! breakpoint-hit-counts maybe-line hit-count)
+                  (= hit-count break-hit-target))))
 
          (define onespot-max #xffff)
          (define twospot-max #xffffffff)
@@ -1071,6 +1228,15 @@
                                   h))
          (define rt-ln->lbl-map '#,ln->lbl-map)
 
+         (define (resolve-debug-sub-part part)
+           (cond
+             [(number? part) part]
+             #,@(map (lambda (v)
+                       (let ([vid (datum->syntax stx v)])
+                         #`[(eq? part '#,v) #,vid]))
+                     all-vars)
+             [else part]))
+
          (define (debug-var-snapshots)
            (filter values
                    (list
@@ -1083,6 +1249,77 @@
                                                #,vid
                                                (length #,vstack))))))
                             all-vars))))
+
+         (define (debug-sub-snapshots)
+           (filter values
+                   (for/list ([spec (in-list (or debug-subs '()))])
+                     (define base (car spec))
+                     (define raw-idxs (cdr spec))
+                     (define idxs (map resolve-debug-sub-part raw-idxs))
+                     (define arr
+                       (cond
+                         #,@(filter-map
+                             (lambda (v)
+                               (define str (symbol->string v))
+                               (and (member (substring str 0 1) '("*" "," ";"))
+                                    (let ([vid (datum->syntax stx v)])
+                                      #`[(eq? base '#,v) #,vid])))
+                             all-vars)
+                         [else #f]))
+                     (and arr
+                          (list base
+                                idxs
+                                (with-handlers ([exn:fail? (lambda (_) '<invalid>)])
+                                  (intercal-array-ref* arr idxs)))))))
+
+         (define maybe-node-store
+           (cond
+             #,@(filter-map
+                 (lambda (v)
+                   (and (string=? (symbol->string v) ",201")
+                        (let ([vid (datum->syntax stx v)])
+                          #`[#t #,vid])))
+                 all-vars)
+             [else #f]))
+
+         (define (debug-node-dump-lines)
+           (cond
+             [(or (not maybe-node-store) (not debug-node-roots)) '()]
+             [else
+              (define seen (make-hash))
+              (define lines '())
+              (define (emit! fmt . args)
+                (set! lines (cons (apply format fmt args) lines)))
+              (define (fetch-field i j k)
+                (with-handlers ([exn:fail? (lambda (_) '<invalid>)])
+                  (intercal-array-ref* maybe-node-store (list i j k))))
+              (define (walk root-name i j depth)
+                (define key (list i j))
+                (cond
+                  [(hash-ref seen key #f)
+                   (emit! "[sick node] root=~a depth=~a node=~s cycle"
+                          root-name depth key)]
+                  [else
+                   (hash-set! seen key #t)
+                   (define fields
+                     (for/list ([k (in-range 1 8)])
+                       (fetch-field i j k)))
+                   (emit! "[sick node] root=~a depth=~a node=~s fields=~s"
+                          root-name depth key fields)
+                   (when (< depth debug-node-depth)
+                     (match fields
+                       [(list _ _ car-i car-j cdr-i cdr-j _)
+                        (when (and (integer? car-i) (integer? car-j))
+                          (walk root-name car-i car-j (add1 depth)))
+                        (when (and (integer? cdr-i) (integer? cdr-j))
+                          (walk root-name cdr-i cdr-j (add1 depth)))]
+                       [_ (void)]))]))
+               (for ([spec (in-list debug-node-roots)])
+                 (define idxs (map resolve-debug-sub-part spec))
+                 (when (and (= (length idxs) 2)
+                            (andmap integer? idxs))
+                  (walk idxs (car idxs) (cadr idxs) 0)))
+              (reverse lines)]))
 
          (define (get-ln-for-lbl target-lbl)
            (hash-ref lbl->ln-map
@@ -1145,6 +1382,7 @@
 
          (define (run)
            (let loop ([pc #,first-ln])
+             (check-step-limit! pc)
              (when (breakpoint-line? pc)
                (parameterize ([current-output-port (current-error-port)])
                  (fprintf (current-output-port)
@@ -1158,6 +1396,13 @@
                      (fprintf (current-output-port)
                               "[sick breakpoint] var=~a value=~s stash-depth=~a\n"
                               sym val depth))))
+                 (for ([entry (in-list (debug-sub-snapshots))])
+                   (match-let ([(list base idxs val) entry])
+                     (fprintf (current-output-port)
+                              "[sick breakpoint] sub=~a idxs=~s value=~s\n"
+                              base idxs val)))
+                 (for ([line (in-list (debug-node-dump-lines))])
+                   (fprintf (current-output-port) "~a\n" line))
                (dump-recent-trace!)
                (error (format "SICK breakpoint at line ~a" pc)))
              (trace! 'pc
