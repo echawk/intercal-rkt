@@ -88,6 +88,28 @@
  (list 2)
  "RESUME 1 returns to the most recent NEXT target")
 
+(check-equal?
+ (call-with-values
+  (thunk
+   (sick-program
+    (10 (do (assign .ONE (mesh 'I))))
+    (20 (do (abstain-gerunds (mesh 'II) calculating)))
+    (30 (do (reinstate-gerunds calculating)))
+    (40 (do (assign .I (mesh 'V))))
+    (50 (do (read-out .I)))
+    (60 (please (give-up)))))
+  list)
+ (list 0)
+ "Computed gerund abstain stacks and reinstate removes one layer")
+
+(check-exn
+ exn:fail?
+ (thunk
+  (sick-program
+   (10 (do (retrieve .I)))
+   (20 (please (give-up)))))
+ "Retrieve without stash raises the INTERCAL error instead of raw car/cdr failure")
+
 
 (check-equal?
  (call-with-values
