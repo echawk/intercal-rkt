@@ -73,7 +73,8 @@
         ;; Racket recognizes it as a core module declaration.
         (datum->syntax #f
          `(,#'module intercal-mod "intercal.rkt"
-            ,normalized-ast)))
+            (call-with-values (lambda () ,normalized-ast)
+              (lambda ignored (void))))))
 
       ;; Return EOF on the second pass so Racket stops reading
       eof))

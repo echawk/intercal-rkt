@@ -303,6 +303,29 @@
  (list 123)
  "Write In from STDIN")
 
+(check-equal?
+ (with-output-to-string
+   (thunk
+    (sick-program
+     (do (assign *I (mesh 'XIII)))
+     (do (assign (sub *I (mesh 'I)) (mesh 234)))
+     (do (assign (sub *I (mesh 'II)) (mesh 112)))
+     (do (assign (sub *I (mesh 'III)) (mesh 112)))
+     (do (assign (sub *I (mesh 'IV)) (mesh 0)))
+     (do (assign (sub *I (mesh 'V)) (mesh 64)))
+     (do (assign (sub *I (mesh 'VI)) (mesh 194)))
+     (do (assign (sub *I (mesh 'VII)) (mesh 48)))
+     (do (assign (sub *I (mesh 'VIII)) (mesh 22)))
+     (do (assign (sub *I (mesh 'IX)) (mesh 248)))
+     (do (assign (sub *I (mesh 'X)) (mesh 168)))
+     (do (assign (sub *I (mesh 'XI)) (mesh 24)))
+     (do (assign (sub *I (mesh 'XII)) (mesh 16)))
+     (do (assign (sub *I (mesh 'XIII)) (mesh 214)))
+     (do (read-out *I))
+     (please (give-up)))))
+ "hello, world\n"
+ "Array READ OUT uses C-INTERCAL tape output")
+
 
 
 ;; FIXME: fix test.

@@ -59,3 +59,9 @@ jobs:
           ick -b onceagain.i && ./onceagain | awk 'NF' > onceagain.out.ick
           racket onceagain.i | grep -v '[0-9]' > onceagain.out.rkt || true
           diff onceagain.out.ick onceagain.out.rkt
+
+      - name: Run hello.i test
+        run: |
+          ick -b hello.i && ./hello | awk 'NF' > hello.out.ick
+          racket hello.i | grep -v '^[0-9][0-9]*$' > hello.out.rkt || true
+          diff hello.out.ick hello.out.rkt

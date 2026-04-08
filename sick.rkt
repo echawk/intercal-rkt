@@ -370,6 +370,15 @@
     [(vector? arr) (vector->list arr)]
     [else '()]))
 
+(define (reverse-byte c)
+  (define x (bitwise-and c #xff))
+  (define x1 (bitwise-ior (arithmetic-shift (bitwise-and x #x0f) 4)
+                          (arithmetic-shift (bitwise-and x #xf0) -4)))
+  (define x2 (bitwise-ior (arithmetic-shift (bitwise-and x1 #x33) 2)
+                          (arithmetic-shift (bitwise-and x1 #xcc) -2)))
+  (bitwise-ior (arithmetic-shift (bitwise-and x2 #x55) 1)
+               (arithmetic-shift (bitwise-and x2 #xaa) -1)))
+
 (require (for-syntax racket/base syntax/parse racket/list racket/dict racket/string))
 
 ;; MAJOR FIXME: need to restructure the programs to instead have their line
@@ -581,20 +590,38 @@
                      #,@(map (lambda (v) #`(hash-set! ignore-tbl (quote #,v) #f))
                              (syntax->list #'(var ...))))]
                 [((~datum write-in) var)
-                 #`(set! var (string->number
-                              (string-join
-                               (map number->string
-                                    (map (lambda (str) (arabic->number str))
-                                         (string-split (read-line)))) "")))]
+                 (let* ([target-datum (syntax->datum #'var)]
+                        [var-str (and (symbol? target-datum) (symbol->string target-datum))]
+                        [ignored-expr (if var-str
+                                          #`(hash-ref ignore-tbl (quote var) #f)
+                                          #`#f)])
+                   (define-values (base idxs) (extract-sub-target target-datum))
+                   (cond
+                     [base
+                      (define base-stx (datum->syntax stx base))
+                      (define idx-stxs (map (lambda (idx) (datum->syntax stx idx)) idxs))
+                      #`(let ([input-val (read-number-input!)])
+                          (unless (hash-ref ignore-tbl (quote #,base-stx) #f)
+                            (intercal-array-set!* #,base-stx (list #,@idx-stxs) input-val)))]
+                     [(and var-str
+                           (or (string-prefix? var-str "*") (string-prefix? var-str ",")))
+                     #'(read-array-input! var (hash-ref ignore-tbl (quote var) #f))]
+                     [else
+                      #`(let ([input-val (read-number-input!)])
+                          (unless #,ignored-expr
+                            (set! var input-val)))]))]
                 [((~datum read-out) var)
                  #`(let ([v var])
-                     (displayln
-                      (cond ((and (number? v) (zero? v)) "_")
-                            ((number? v) (string-upcase (number->roman v)))
-                            (else "")))
-                     (if (or (vector? v) (intercal-array? v))
-                         (set! output-acc (append (reverse (array-output-list v)) output-acc))
-                         (set! output-acc (cons v output-acc))))]
+                     (cond
+                       [(or (vector? v) (intercal-array? v))
+                        (write-array-output! v)
+                        (set! output-acc (append (reverse (array-output-list v)) output-acc))]
+                       [else
+                        (displayln
+                         (cond ((and (number? v) (zero? v)) "_")
+                               ((number? v) (string-upcase (number->roman v)))
+                               (else "")))
+                        (set! output-acc (cons v output-acc))]))]
 
                 [((~datum abstain) (~optional (~datum from)) target)
                  (let ([t (eval-label-target #'target)])
@@ -688,6 +715,8 @@
          (define next-stack '())
          (define ignore-tbl (make-hash))
          (define debug? (sick-debug))
+         (define tape-last-in 0)
+         (define tape-last-out 0)
 
          (define (trace! tag . xs)
            (when debug?
@@ -696,6 +725,42 @@
 
          (define (#,(datum->syntax stx 'sub) arr . idxs)
            (intercal-array-ref* arr idxs))
+
+         (define (read-number-input!)
+           (define line (read-line))
+           (when (eof-object? line)
+             (ick-err "E562"))
+           (string->number
+            (string-join
+             (map number->string
+                  (map arabic->number
+                       (string-split line)))
+             "")))
+
+         (define (read-array-input! arr ignored?)
+           (define actual-arr (ensure-intercal-array arr))
+           (unless (= (length (intercal-array-dimensions actual-arr)) 1)
+             (ick-err "E241"))
+           (for ([i (in-range (vector-length (intercal-array-data actual-arr)))])
+             (define c (read-byte))
+             (define v (if (eof-object? c)
+                           256
+                           (modulo (- c tape-last-in) 256)))
+             (set! tape-last-in (if (eof-object? c) -1 c))
+             (unless ignored?
+               (vector-set! (intercal-array-data actual-arr) i v))))
+
+         (define (write-array-output! arr)
+           (define actual-arr (ensure-intercal-array arr))
+           (unless (= (length (intercal-array-dimensions actual-arr)) 1)
+             (ick-err "E241"))
+           (for ([v (in-vector (intercal-array-data actual-arr))])
+             (define c (reverse-byte (modulo (- tape-last-out v) 256)))
+             (set! tape-last-out (modulo (- tape-last-out v) 256))
+             (write-byte c)
+             (when (or (= c 10) #f)
+               (flush-output)))
+           (flush-output))
 
          ;; State tables for the Unified Theory
          (define source-is-not-tbl (make-hash))
