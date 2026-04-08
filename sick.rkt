@@ -234,6 +234,7 @@
 (define (arabic->number as)
   (match as
     ["ZERO" 0]
+    ["OH" 0]
     ["ONE" 1]
     ["TWO" 2]
     ["THREE" 3]
@@ -243,7 +244,7 @@
     ["SEVEN" 7]
     ["EIGHT" 8]
     ["NINE" 9]
-    [_ (ick-err "E579" as)]))
+    [_ (error (ick-err "E579" as))]))
 
 (define (mesh rn)
   (cond
@@ -500,6 +501,25 @@
                             (values base acc))]
       [_ (values #f '())])))
 
+(define-for-syntax (flatten-sub-datum datum)
+  (match datum
+    [`(sub ,base ,idxs ...)
+     (define flat-base (flatten-sub-datum base))
+     (define flat-idxs (map flatten-sub-datum idxs))
+     (match flat-base
+       [`(sub ,inner-base ,inner-idxs ...)
+        `(sub ,inner-base ,@inner-idxs ,@flat-idxs)]
+       [_ `(sub ,flat-base ,@flat-idxs)])]
+    [(list elems ...)
+     (map flatten-sub-datum elems)]
+    [_ datum]))
+
+(define-for-syntax (flatten-sub-stx stx)
+  (datum->syntax stx
+                 (flatten-sub-datum (syntax->datum stx))
+                 stx
+                 stx))
+
 (define-for-syntax (op->gerunds datum)
   (match datum
     [`(assign . ,_) '(calculating)]
@@ -534,7 +554,7 @@
         (filter (lambda (sym)
                   (and (symbol? sym)
                        (let ([str (symbol->string sym)])
-                         (member (substring str 0 1) '("." ":" "*" ",")))))
+                         (member (substring str 0 1) '("." ":" "*" "," ";")))))
                 (flatten (map syntax->datum ops)))))
 
      (define grouped-come-froms
@@ -585,7 +605,8 @@
      (define ln->op-map
        (let ([h (make-hash)])
          (for-each (lambda (l-ln l-op)
-                     (hash-set! h (syntax-e l-ln) (syntax->datum l-op)))
+                     (hash-set! h (syntax-e l-ln)
+                                (syntax->datum (flatten-sub-stx l-op))))
                    (syntax->list #'(ln ...))
                    ops)
          h))
@@ -595,7 +616,9 @@
               (define vid (datum->syntax stx v))
               (define vstack (datum->syntax stx (string->symbol (string-append (symbol->string v) "-stack"))))
               (define str (symbol->string v))
-              (if (or (string-prefix? str "*") (string-prefix? str ","))
+              (if (or (string-prefix? str "*")
+                      (string-prefix? str ",")
+                      (string-prefix? str ";"))
                   #`(begin (define #,vid #f) (define #,vstack '()))
                   #`(begin (define #,vid 0)  (define #,vstack '()))))
             all-vars))
@@ -615,14 +638,16 @@
             (define current-pct (car pcts))
             (define is-once-val (syntax-e (car is-onces)))
             (define is-again-val (syntax-e (car is-agains)))
-            (define current-op (car operations))
+            (define current-op (flatten-sub-stx (car operations)))
             (define next-ln-val (if (null? (cdr lns)) #f (syntax-e (cadr lns))))
 
             (define compiled-op
               (syntax-parse current-op
                 [((~datum assign) var ((~datum dimension) dim ...))
                  (let ([var-str (symbol->string (syntax-e #'var))])
-                   (if (or (string-prefix? var-str "*") (string-prefix? var-str ","))
+                   (if (or (string-prefix? var-str "*")
+                           (string-prefix? var-str ",")
+                           (string-prefix? var-str ";"))
                        #'(unless (hash-ref ignore-tbl (quote var) #f)
                            (set! var (make-intercal-array (list dim ...))))
                        #'(unless (hash-ref ignore-tbl (quote var) #f)
@@ -640,10 +665,14 @@
                                   (format "pc=~a target=~a idxs=~a value=~a" #,current-ln '#,base (list #,@idx-stxs) val)
                                   #:line #,current-ln
                                   #:var '#,base)
-                          (intercal-array-set!* #,base-stx (list #,@idx-stxs) val))]
+                          (intercal-array-set!* #,base-stx
+                                                (list #,@idx-stxs)
+                                                (checked-element-store-value '#,base val)))]
                      [(and var-str
-                           (or (string-prefix? var-str "*") (string-prefix? var-str ",")))
-                     #`(unless (hash-ref ignore-tbl (quote var) #f)
+                           (or (string-prefix? var-str "*")
+                               (string-prefix? var-str ",")
+                               (string-prefix? var-str ";")))
+                      #`(unless (hash-ref ignore-tbl (quote var) #f)
                           (trace! 'assign
                                   (format "pc=~a target=~a value=~a" #,current-ln 'var val)
                                   #:line #,current-ln
@@ -655,7 +684,7 @@
                                   (format "pc=~a target=~a value=~a" #,current-ln '#,target-datum val)
                                   #:line #,current-ln
                                   #:var '#,target-datum)
-                          (set! var val))]))]
+                          (set! var (checked-store-value '#,target-datum val)))]))]
                 [((~datum stash) var ...)
                  #`(begin
                      #,@(map (lambda (v)
@@ -685,7 +714,7 @@
                                                #:var '#,(syntax-e v))
                                        (set! #,vstack (cdr #,vstack))
                                        (unless (hash-ref ignore-tbl (quote #,v) #f)
-                                         (set! #,v retrieved-val))))))
+                                         (set! #,v (checked-store-value '#,(syntax-e v) retrieved-val)))))))
                              (syntax->list #'(var ...))))]
                 [((~datum ignore) var ...)
                  #`(begin
@@ -709,14 +738,18 @@
                       (define idx-stxs (map (lambda (idx) (datum->syntax stx idx)) idxs))
                       #`(let ([input-val (read-number-input!)])
                           (unless (hash-ref ignore-tbl (quote #,base-stx) #f)
-                            (intercal-array-set!* #,base-stx (list #,@idx-stxs) input-val)))]
+                            (intercal-array-set!* #,base-stx
+                                                  (list #,@idx-stxs)
+                                                  (checked-element-store-value '#,base input-val))))]
                      [(and var-str
-                           (or (string-prefix? var-str "*") (string-prefix? var-str ",")))
+                           (or (string-prefix? var-str "*")
+                               (string-prefix? var-str ",")
+                               (string-prefix? var-str ";")))
                      #'(read-array-input! var (hash-ref ignore-tbl (quote var) #f))]
                      [else
                       #`(let ([input-val (read-number-input!)])
                           (unless #,ignored-expr
-                            (set! var input-val)))]))]
+                            (set! var (checked-store-value '#,target-datum input-val))))]))]
                 [((~datum read-out) var)
                  #`(let ([v var])
                      (trace! 'read-out
@@ -897,6 +930,47 @@
            (dump-recent-trace!)
            (error msg))
 
+         (define onespot-max #xffff)
+         (define twospot-max #xffffffff)
+
+         (define (array-var-name? sym)
+           (define str (and (symbol? sym) (symbol->string sym)))
+           (and str
+                (member (substring str 0 1) '("*" "," ";"))))
+
+         (define (onespot-value-target? sym)
+           (define str (and (symbol? sym) (symbol->string sym)))
+           (and str
+                (member (substring str 0 1) '("." "*" ","))))
+
+         (define (twospot-value-target? sym)
+           (define str (and (symbol? sym) (symbol->string sym)))
+           (and str
+                (member (substring str 0 1) '(":" ";"))))
+
+         (define (checked-scalar-store-value sym val)
+           (cond
+             [(onespot-value-target? sym)
+              (cond
+                [(and (exact-integer? val) (<= 0 val onespot-max)) val]
+                [(and (exact-integer? val) (<= 0 val twospot-max))
+                 (runtime-fail (ick-err "E275"))]
+                [else
+                 (runtime-fail (ick-err "E533"))])]
+             [(twospot-value-target? sym)
+              (if (and (exact-integer? val) (<= 0 val twospot-max))
+                  val
+                  (runtime-fail (ick-err "E533")))]
+             [else val]))
+
+         (define (checked-store-value sym val)
+           (if (array-var-name? sym)
+               val
+               (checked-scalar-store-value sym val)))
+
+         (define (checked-element-store-value sym val)
+           (checked-scalar-store-value sym val))
+
          (define (#,(datum->syntax stx 'sub) arr . idxs)
            (intercal-array-ref* arr idxs))
 
@@ -1072,6 +1146,21 @@
      ;; What the fuck racket.
      (define (clean-intercal-string str)
        (define lines (string-split str "\n"))
+       (define token-rx
+         #px"\\(|\\)|<-|~|\\$|#|\\+|\\.|:|\\*|,|;|&|\\?|V|!|%|'|\"|[0-9]+|[A-Za-z]+")
+
+       (define (parseable-line-prefix line)
+         (define tokens
+           (regexp-match*
+            token-rx
+            (string-replace
+             (string-replace line "!" "'.")
+             "DON'T" "DO NOT")))
+         (for/or ([n (in-range (length tokens) 0 -1)])
+           (define candidate (string-join (take tokens n) " "))
+           (with-handlers ([exn:fail? (lambda (_) #f)])
+             (parse (tokenize (open-input-string candidate)))
+             candidate)))
 
        ;; 1. Matches lines that start with a VALID operation or variable assignment.
        ;; It ensures DO/PLEASE is immediately followed by a real command (STASH, etc) or a variable [.:,;]
@@ -1079,39 +1168,75 @@
          #px"^[ \t]*(?:\\([0-9]+\\)[ \t]*)?(?:(?:PLEASE|DO|NOT|MAYBE|%[0-9]+)[ \t]*)+(?:STASH|RETRIEVE|IGNORE|REMEMBER|ABSTAIN|REINSTATE|FORGET|RESUME|READ|WRITE|COME|GIVE|TRY|NOTHING|[.:,;]|\\()")
 
        ;; 2. Matches multi-line continuations.
-       ;; These are indented lines containing ONLY valid INTERCAL math/logic symbols, quotes, and numbers.
-       ;; This cleanly catches wrapped math while rejecting "DOUBLE OR SINGLE PRECISION OVERFLOW"
+       ;; These are indented continuation lines containing compact expression tokens
+       ;; (including SUB) but no free-form prose spacing.
        (define continuation-rx
-         #px"^[ \t]+[\"'?&V!#0-9.:,~$\\s+-]+$")
+         #px"^[ \t]+[\"'?&V!#0-9.:,;~$A-Za-z]+$")
+
+       ;; 3. Matches statement prefixes that are syntactically incomplete on their own,
+       ;; but are expected to continue on the next indented line.
+       (define incomplete-start-rx
+         #px"^(?:.*(?:<-|RESUME|FORGET|STASH|RETRIEVE|READ OUT|WRITE IN|ABSTAIN(?: [^ ]+)? FROM|REINSTATE|SUB|BY|\\$|~|&|V|\\?|['\"]))[ \t]*$")
 
        (define cleaned-lines
-         (filter (lambda (l)
-                   (or (regexp-match? valid-start-rx l)
-                       (regexp-match? continuation-rx l)))
-                 lines))
+         (filter values
+                 (map (lambda (l)
+                        (cond
+                          [(regexp-match? valid-start-rx l)
+                           (if (regexp-match? incomplete-start-rx l)
+                               l
+                               (parseable-line-prefix l))]
+                          [(regexp-match? continuation-rx l) l]
+                          [else #f]))
+                      lines)))
 
        (string-join cleaned-lines "\n"))
 
      ;; 1. Get raw user AST
      (define raw-user-ast (syntax->datum #'(sick-line ...)))
 
-     ;; 2. Parse syslib to raw AST
-     (define full-syslib-ast
-       (normalize-program
-        (syntax->datum
-         (parse
-          (tokenize
-           (open-input-string
-            (clean-intercal-string (file->string "syslib.i"))))))))
+     (define (collect-integers datum)
+       (cond
+         [(integer? datum) (list datum)]
+         [(pair? datum) (append (collect-integers (car datum))
+                                (collect-integers (cdr datum)))]
+         [(vector? datum) (apply append (map collect-integers (vector->list datum)))]
+         [else '()]))
 
-     ;; 3. Strip the wrapper off syslib
-     (define syslib-ast
-       (if (and (list? full-syslib-ast) (symbol? (car full-syslib-ast)))
-           (cdr full-syslib-ast)
-           full-syslib-ast))
+     (define user-defined-labels
+       (for/list ([line (in-list raw-user-ast)]
+                  #:when (and (pair? line) (integer? (car line))))
+         (car line)))
+
+     (define user-integers (remove-duplicates (collect-integers raw-user-ast)))
+
+     (define (library-needed? lo hi)
+       (for/or ([n (in-list user-integers)])
+         (and (<= lo n hi)
+              (not (member n user-defined-labels)))))
+
+     (define (load-library-ast path)
+       (define full-ast
+         (normalize-program
+          (syntax->datum
+           (parse
+            (tokenize
+             (open-input-string
+              (clean-intercal-string (file->string path))))))))
+       (if (and (list? full-ast) (symbol? (car full-ast)))
+           (cdr full-ast)
+           full-ast))
+
+     ;; 2. Parse syslib to raw AST
+     (define syslib-ast (load-library-ast "syslib.i"))
+     (define floatlib-ast
+       (if (and (file-exists? "floatlib.i")
+                (library-needed? 5000 5999))
+           (load-library-ast "floatlib.i")
+           '()))
 
      ;; 4. COMBINE the ASTs first
-     (define combined-ast (append raw-user-ast syslib-ast))
+     (define combined-ast (append raw-user-ast syslib-ast floatlib-ast))
 
      ;; ;; 4.5. AST Rewriter: Fix unary operator precedence from the parser
      ;; ;; Turns `(mingle (unary-xor X) Y)` into `(unary-xor (mingle X Y))`

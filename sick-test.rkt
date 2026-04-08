@@ -193,6 +193,48 @@
   list)
  (list 5 10))
 
+(check-equal?
+ (call-with-values
+  (thunk
+   (sick-program
+    (10 (do (assign *M (dimension (mesh 'II) (mesh 'II)))))
+    (20 (do (assign (sub *M (mesh 'II) (mesh 'I)) (mesh 'VII))))
+    (30 (do (assign .X (sub (sub *M (mesh 'II)) (mesh 'I)))))
+    (40 (do (read-out .X)))
+    (50 (please (give-up)))))
+  list)
+ (list 7)
+ "Nested SUB expressions flatten and read multidimensional arrays correctly")
+
+(check-exn
+ exn:fail?
+ (thunk
+  (sick-program
+   (10 (do (assign .X 65536)))
+   (20 (please (give-up)))))
+ "Assigning a twospot-sized value to a onespot raises E275")
+
+(check-exn
+ exn:fail?
+ (thunk
+  (sick-program
+   (10 (do (assign :X 4294967296)))
+   (20 (please (give-up)))))
+ "Assigning beyond twospot range raises E533")
+
+(check-equal?
+ (call-with-values
+  (thunk
+   (sick-program
+    (10 (do (assign |;A| (dimension (mesh 'I)))))
+    (20 (do (assign (sub |;A| (mesh 'I)) 42)))
+    (30 (do (assign :X (sub |;A| (mesh 'I)))))
+    (40 (do (read-out :X)))
+    (50 (please (give-up)))))
+  list)
+ (list 42)
+ "Semicolon arrays are tracked as twospot arrays and can be read back")
+
 
 (define (string->sick-program str)
   (let ((len (string-length str)))
