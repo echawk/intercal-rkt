@@ -71,6 +71,21 @@
    '(sick-program/syslib
      (10 (do (assign (sub .I 1) (mesh 5)))))))
 
+(test-case "array dimension assignment"
+  (check-equal?
+   (norm*
+    "(10) DO ,201 <- .200 BY #32767 BY .204")
+   '(sick-program/syslib
+     (10 (do (assign |,201| (dimension |.200| (mesh 32767) |.204|)))))))
+
+(test-case "packed subscript chain"
+  (check-equal?
+   (norm*
+    "(10) DO ,201SUB.201.202#7 <- ,202SUB.201.202#7")
+   '(sick-program/syslib
+     (10 (do (assign (sub (sub (sub |,201| |.201|) |.202|) (mesh 7))
+                     (sub (sub (sub |,202| |.201|) |.202|) (mesh 7))))))))
+
 ;; (test-case "sub in expr"
 ;;   (parse*
 ;;    "10 DO :X <- .I SUB 1"))

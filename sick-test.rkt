@@ -129,6 +129,19 @@
   list)
  (list 10 0 0 0 3))
 
+(check-equal?
+ (call-with-values
+  (thunk
+   (sick-program
+    (10 (do (assign *M (dimension (mesh 'II) (mesh 'III)))))
+    (20 (do (assign (sub *M (mesh 'I) (mesh 'I)) (mesh 'V))))
+    (30 (do (assign (sub *M (mesh 'II) (mesh 'III)) (mesh 'X))))
+    (40 (do (read-out (sub *M (mesh 'I) (mesh 'I)))))
+    (50 (do (read-out (sub *M (mesh 'II) (mesh 'III)))))
+    (60 (please (give-up)))))
+  list)
+ (list 5 10))
+
 
 (define (string->sick-program str)
   (let ((len (string-length str)))

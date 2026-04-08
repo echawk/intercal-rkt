@@ -20,6 +20,41 @@
     "WRITING"
     ))
 
+(define (simple-subscript-start? w)
+  (member w '("." ":" "," "*" "#")))
+
+(define (consume-simple-subscript words start)
+  (define first (list-ref words start))
+  (cond
+    [(member first '("." ":" "," "*"))
+     (values (take (drop words start) 2) (+ start 2))]
+    [(equal? first "#")
+     (values (take (drop words start) 2) (+ start 2))]
+    [else
+     (values (list first) (add1 start))]))
+
+(define (expand-packed-subscripts words)
+  (let loop ([remaining words] [acc '()])
+    (cond
+      [(null? remaining) (reverse acc)]
+      [(and (pair? remaining) (equal? (car remaining) "SUB"))
+       (define base-acc (cons "SUB" acc))
+       (let subloop ([idx (cdr remaining)] [sub-acc base-acc] [need-first? #t])
+         (cond
+           [(null? idx) (loop idx sub-acc)]
+           [(simple-subscript-start? (car idx))
+            (define-values (piece rest-index)
+              (consume-simple-subscript idx 0))
+            (define next-acc
+              (append (reverse piece)
+                      (if need-first?
+                          sub-acc
+                          (cons "SUB" sub-acc))))
+            (subloop (drop idx (length piece)) next-acc #f)]
+           [else (loop idx sub-acc)]))]
+      [else
+       (loop (cdr remaining) (cons (car remaining) acc))])))
+
 (define (tokenize in)
   (define str (port->string in))
 
@@ -30,9 +65,10 @@
      "DON'T" "DO NOT"))
 
   (define words
-    (regexp-match*
-     #px"\\(|\\)|<-|~|\\$|#|\\+|\\.|:|\\*|,|&|\\?|V|!|%|'|\"|[0-9]+|[A-Za-z]+"
-     clean-str))
+    (expand-packed-subscripts
+     (regexp-match*
+      #px"\\(|\\)|<-|~|\\$|#|\\+|\\.|:|\\*|,|&|\\?|V|!|%|'|\"|[0-9]+|[A-Za-z]+"
+      clean-str)))
 
   (for/list ([w words])
     (cond

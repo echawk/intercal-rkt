@@ -317,6 +317,54 @@
 
 (define (sick-dec val) (max 0 (sub1 val)))
 
+(struct intercal-array (dimensions data) #:transparent)
+
+(define (make-intercal-array dims)
+  (define normalized-dims
+    (for/list ([dim dims])
+      (unless (and (integer? dim) (positive? dim))
+        (error (ick-err "E240")))
+      dim))
+  (intercal-array normalized-dims
+                  (make-vector (apply * normalized-dims) 0)))
+
+(define (legacy-vector->array arr)
+  (intercal-array (list (vector-length arr)) arr))
+
+(define (ensure-intercal-array arr)
+  (cond
+    [(intercal-array? arr) arr]
+    [(vector? arr) (legacy-vector->array arr)]
+    [else (error (ick-err "E241"))]))
+
+(define (intercal-array-offset arr idxs)
+  (define dims (intercal-array-dimensions arr))
+  (unless (= (length dims) (length idxs))
+    (error (ick-err "E241")))
+  (for/fold ([offset 0])
+            ([dim dims]
+             [idx idxs])
+    (unless (and (integer? idx) (<= 1 idx dim))
+      (error (ick-err "E241")))
+    (+ (* offset dim) (sub1 idx))))
+
+(define (intercal-array-ref* arr idxs)
+  (define actual-arr (ensure-intercal-array arr))
+  (vector-ref (intercal-array-data actual-arr)
+              (intercal-array-offset actual-arr idxs)))
+
+(define (intercal-array-set!* arr idxs val)
+  (define actual-arr (ensure-intercal-array arr))
+  (vector-set! (intercal-array-data actual-arr)
+               (intercal-array-offset actual-arr idxs)
+               val))
+
+(define (array-output-list arr)
+  (cond
+    [(intercal-array? arr) (vector->list (intercal-array-data arr))]
+    [(vector? arr) (vector->list arr)]
+    [else '()]))
+
 (require (for-syntax racket/base syntax/parse racket/list racket/dict racket/string))
 
 ;; MAJOR FIXME: need to restructure the programs to instead have their line
@@ -392,6 +440,25 @@
     [(tgt) (syntax-e #'tgt)]
     [tgt (syntax-e #'tgt)]))
 
+(define-for-syntax (extract-sub-target datum)
+  (let loop ([node datum] [acc '()])
+    (match node
+      [`(sub ,base ,idxs ...)
+       (cond
+         [(null? idxs) (values #f '())]
+         [(and (pair? base) (eq? (car base) 'sub))
+          (define-values (inner-base inner-idxs) (loop base '()))
+          (if inner-base
+              (values inner-base (append inner-idxs idxs))
+              (values base idxs))]
+         [else
+          (values base idxs)])]
+      [`(sub ,base ,idx) (loop base (cons idx acc))]
+      [(? symbol? base) (if (null? acc)
+                            (values #f '())
+                            (values base acc))]
+      [_ (values #f '())])))
+
 
 (define-syntax (sick-program-core stx)
   (syntax-parse stx
@@ -461,15 +528,27 @@
 
             (define compiled-op
               (syntax-parse current-op
-                [((~datum assign) ((~datum sub) arr idx) val)
-                 #`(unless (hash-ref ignore-tbl (quote arr) #f)
-                     (vector-set! arr (sub1 idx) val))]
-                [((~datum assign) var val)
+                [((~datum assign) var ((~datum dimension) dim ...))
                  (let ([var-str (symbol->string (syntax-e #'var))])
+                   (if (or (string-prefix? var-str "*") (string-prefix? var-str ","))
+                       #'(unless (hash-ref ignore-tbl (quote var) #f)
+                           (set! var (make-intercal-array (list dim ...))))
+                       #'(unless (hash-ref ignore-tbl (quote var) #f)
+                           (set! var (list dim ...)))))]
+                [((~datum assign) var val)
+                 (let* ([target-datum (syntax->datum #'var)]
+                        [var-str (and (symbol? target-datum) (symbol->string target-datum))])
+                   (define-values (base idxs) (extract-sub-target target-datum))
                    (cond
-                     [(or (string-prefix? var-str "*") (string-prefix? var-str ","))
+                     [base
+                      (define base-stx (datum->syntax stx base))
+                      (define idx-stxs (map (lambda (idx) (datum->syntax stx idx)) idxs))
+                      #`(unless (hash-ref ignore-tbl (quote #,base-stx) #f)
+                          (intercal-array-set!* #,base-stx (list #,@idx-stxs) val))]
+                     [(and var-str
+                           (or (string-prefix? var-str "*") (string-prefix? var-str ",")))
                       #'(unless (hash-ref ignore-tbl (quote var) #f)
-                          (set! var (make-vector val 0)))]
+                          (set! var (make-intercal-array (list val))))]
                      [else
                       #`(unless (hash-ref ignore-tbl (quote var) #f)
                           (set! var val))]))]
@@ -508,8 +587,8 @@
                       (cond ((and (number? v) (zero? v)) "_")
                             ((number? v) (string-upcase (number->roman v)))
                             (else "")))
-                     (if (vector? v)
-                         (set! output-acc (append (reverse (vector->list v)) output-acc))
+                     (if (or (vector? v) (intercal-array? v))
+                         (set! output-acc (append (reverse (array-output-list v)) output-acc))
                          (set! output-acc (cons v output-acc))))]
 
                 [((~datum abstain) (~optional (~datum from)) target)
@@ -602,8 +681,8 @@
          (define next-stack '())
          (define ignore-tbl (make-hash))
 
-         (define (#,(datum->syntax stx 'sub) arr idx)
-           (vector-ref arr (sub1 idx)))
+         (define (#,(datum->syntax stx 'sub) arr . idxs)
+           (intercal-array-ref* arr idxs))
 
          ;; State tables for the Unified Theory
          (define source-is-not-tbl (make-hash))

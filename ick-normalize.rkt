@@ -2,6 +2,26 @@
 
 (provide normalize-program)
 
+(define (normalize-subscript-chain base subs)
+  `(sub ,(normalize-expr base) ,@subs))
+
+(define (extract-subscripts ast)
+  (match ast
+    [`(sublist ,e) (list (normalize-expr e))]
+    [`(sublist ,rest ,e) (append (extract-subscripts rest)
+                                 (list (normalize-expr e)))]
+    [_ (list (normalize-expr ast))]))
+
+(define (extract-dimensions ast)
+  (match ast
+    [`(dim-list ,lhs "BY" ,rhs)
+     (if (and (pair? lhs) (eq? (car lhs) 'dim-list))
+         (append (extract-dimensions lhs)
+                 (list (normalize-expr rhs)))
+         (list (normalize-expr lhs)
+               (normalize-expr rhs)))]
+    [_ (list (normalize-expr ast))]))
+
 ;; =============================================================================
 ;; EXPRESSION NORMALIZER
 ;; Crushes the dense 6-layer CST from brag down into clean Lisp expressions.
@@ -30,8 +50,8 @@
     [`(unary "?" ,rhs) `(unary-xor ,(normalize-expr rhs))]
 
     ;; 4. Subscripting (Arrays)
-    [`(var ,base "SUB" ,idx)     `(sub ,(normalize-expr base) ,(normalize-expr idx))]
-    [`(postfix ,base "SUB" ,idx) `(sub ,(normalize-expr base) ,(normalize-expr idx))]
+    [`(var ,base "SUB" ,subs)     (normalize-subscript-chain base (extract-subscripts subs))]
+    [`(postfix ,base "SUB" ,subs) (normalize-subscript-chain base (extract-subscripts subs))]
 
     ;; 5. Variables (e.g. "." "I" -> '.I)
     [`(var ,prefix (ident ,id))
@@ -96,8 +116,10 @@
 ;; =============================================================================
 (define (normalize-op op)
   (match op
-    [`(op (assign ,var "<-" ,expr))
-     `(assign ,(normalize-expr var) ,(normalize-expr expr))]
+    [`(op (assign ,var "<-" ,rhs))
+     (if (and (list? rhs) (eq? (car rhs) 'dim-list))
+         `(assign ,(normalize-expr var) (dimension ,@(extract-dimensions rhs)))
+         `(assign ,(normalize-expr var) ,(normalize-expr rhs)))]
 
     [`(op (next ,tgt "NEXT"))
      `(next ,(normalize-expr tgt))]
@@ -214,7 +236,3 @@
       `(sick-program/syslib
         ,@(map normalize-line lines)))]
     [_ (error "Unrecognized program structure:" tree)]))
-
-
-
-

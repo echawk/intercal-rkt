@@ -48,6 +48,10 @@ gerund : CALCULATING
        | WRITING
 
 assign : var GETS expr
+       | var GETS dim-list
+
+dim-list : expr BY expr
+         | dim-list BY expr
 
 ignore : IGNORE var
 
@@ -78,9 +82,13 @@ nothing : NOTHING
 ident : NUMBER | ID
 
 var : DOT ident
+    | STAR ident
     | COLON ident
     | COMMA ident
-    | var SUB expr
+    | var SUB sublist
+
+sublist : expr
+        | sublist expr
 
 expr-list : expr
           | expr-list PLUS expr
@@ -103,7 +111,7 @@ unary
 
 postfix
   : primary
-  | postfix SUB expr
+  | postfix SUB sublist
 
 primary
   : var
