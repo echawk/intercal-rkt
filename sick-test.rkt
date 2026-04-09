@@ -86,6 +86,14 @@
   (define rotated-bits (cons (last bits) (drop-right bits 1)))
   (slow-bits->int (map op-proc bits rotated-bits)))
 
+(define (expanded-sick-module-source stx)
+  (format "~s"
+          (syntax->datum
+           (expand
+            #`(module sick-expand-test racket
+                (require "sick.rkt")
+                #,stx)))))
+
 (test-case "optimized bit operators preserve reference semantics"
   (define sample-8 '(0 1 2 3 5 7 15 16 31 85 170 255))
   (define sample-16 '(0 1 2 3 5 7 15 16 31 255 256 257 1023 32767 32768 65535))
@@ -151,6 +159,40 @@
                   (slow-intercal-unary bitwise-ior v 32))
     (check-equal? (unary-xor-32 v)
                   (slow-intercal-unary bitwise-xor v 32))))
+
+(test-case "SELECT width follows the right operand width in generated code"
+  (define expanded-source
+    (expanded-sick-module-source
+     #'(sick-program
+        (10 (do (assign |.202| (mesh 511))))
+        (20 (do (assign |.1|
+                        (select
+                         (unary-xor
+                          (mingle
+                           (select |.202| |.202|)
+                           (mesh 32768)))
+                         (mingle (mesh 16384) (mesh 16384))))))
+        (30 (do (read-out |.1|)))
+        (40 (please (give-up))))))
+  (check-true (regexp-match? #rx"select-32" expanded-source)))
+
+(test-case "unlambda allocator SELECT expression keeps twospot width"
+  (check-equal?
+   (call-with-values
+   (thunk
+     (sick-program
+      (10 (do (assign |.202| (mesh 511))))
+      (20 (do (assign |.1|
+                      (select
+                       (unary-xor
+                        (mingle
+                         (select |.202| |.202|)
+                         (mesh 32768)))
+                       (mingle (mesh 16384) (mesh 16384))))))
+      (30 (do (read-out |.1|)))
+      (40 (please (give-up)))))
+    list)
+   (list 2)))
 
 (test-case "abstain analysis marks only lines that can actually be abstained"
   (check-equal?
@@ -228,14 +270,6 @@
        (40 _ do 100 #f #f #f (come-from (mesh 200)))))
     <)
    '(100 200)))
-
-(define (expanded-sick-module-source stx)
-  (format "~s"
-          (syntax->datum
-           (expand
-            #`(module sick-expand-test racket
-                (require "sick.rkt")
-                #,stx)))))
 
 (test-case "abstain optimizer removes guard code from non-abstainable lines"
   (define no-abstain-source

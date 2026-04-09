@@ -903,19 +903,20 @@
 (define-for-syntax (ct-intercal-select val mask width)
   (let loop ([r (bitwise-and val (ct-width-mask width))]
              [s (bitwise-and mask (ct-width-mask width))]
-             [out 0]
-             [shift 0])
+             [i 1]
+             [t 0])
     (cond
-      [(zero? s) out]
+      [(zero? s) t]
+      [(positive? (bitwise-and s i))
+       (loop r
+             (bitwise-xor s i)
+             (arithmetic-shift i 1)
+             (bitwise-ior t (bitwise-and r i)))]
       [else
-       (define next-out
-         (if (positive? (bitwise-and s 1))
-             (bitwise-ior out (arithmetic-shift (bitwise-and r 1) shift))
-             out))
        (loop (arithmetic-shift r -1)
              (arithmetic-shift s -1)
-             next-out
-             (if (positive? (bitwise-and s 1)) (add1 shift) shift))])))
+             i
+             t)])))
 
 (define-for-syntax (ct-intercal-unary op-proc val width)
   (define mask (ct-width-mask width))
@@ -1003,10 +1004,8 @@
     [`(mingle ,_ ,_) 32]
     [`(mingle-16 ,_ ,_) 32]
     [`(select ,lhs ,rhs)
-     (define rhs-val (const-expr-value rhs))
-     (if rhs-val
-         (if (> (bit-count rhs-val) 16) 32 16)
-         (expr-width lhs))]
+     ;; C-INTERCAL fixes SELECT width to the width of the right operand.
+     (expr-width rhs)]
     [`(select-16 ,_ ,_) 16]
     [`(select-32 ,_ ,_) 32]
     [`(unary-and ,rhs) (expr-width rhs)]
