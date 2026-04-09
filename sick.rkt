@@ -424,6 +424,13 @@
               (string->number (string-trim raw)))
          1))))
 
+(define sick-break-repeat
+  (make-parameter
+   (let ([raw (getenv "SICK_BREAK_REPEAT")])
+     (and raw
+          (regexp-match? #px"^[0-9]+$" (string-trim raw))
+          (string->number (string-trim raw))))))
+
 (define sick-max-steps
   (make-parameter
    (let ([raw (getenv "SICK_MAX_STEPS")])
@@ -1143,7 +1150,10 @@
                 [((~datum next) target)
                  #`(if (>= (length next-stack) 80)
                        (ick-err "E123")
-                       (set! next-stack (cons '#,(if next-ln-val next-ln-val #f) next-stack)))]
+                       (set! next-stack
+                             (cons (cons '#,(if next-ln-val next-ln-val #f)
+                                         '#,(syntax-e current-lbl))
+                                   next-stack)))]
                 [((~datum resume) var)       #`(void)]
                 [((~datum forget) var)       #`(void)]
                 [((~datum try-again))        #`(void)]
@@ -1175,24 +1185,37 @@
                     [((~datum next) target)
                      (let ([t (eval-label-target #'target)])
                        #`(begin
-                           (trace! 'next (format "pc=~a target=~a stack=~a" #,current-ln '#,t next-stack) #:line #,current-ln)
+                           (trace! 'next (format "pc=~a target=~a stack=~a" #,current-ln '#,t (next-stack->debug)) #:line #,current-ln)
                            (loop (get-ln-for-lbl '#,t))))]
                     [((~datum resume) var)
                      #`(let ([count var])
                          (cond
                            [(<= count 0) (runtime-fail (ick-err "E632"))]
                            [(> count (length next-stack))
-                            (trace! 'resume-error (format "pc=~a count=~a stack=~a" #,current-ln count next-stack) #:line #,current-ln)
+                            (trace! 'resume-error
+                                    (format "pc=~a count=~a stack=~a"
+                                            #,current-ln
+                                            count
+                                            (next-stack->debug))
+                                    #:line #,current-ln)
                             (runtime-fail (ick-err "E632"))]
-                           [else
-                            (let ([target-pc (list-ref next-stack (- count 1))])
-                              (trace! 'resume (format "pc=~a count=~a target=~a stack-before=~a" #,current-ln count target-pc next-stack) #:line #,current-ln)
+                           (else
+                            (let* ([target-entry (list-ref next-stack (- count 1))]
+                                   [target-pc (next-entry-pc target-entry)]
+                                   [target-lbl (next-entry-lbl target-entry)])
+                              (trace! 'resume
+                                      (format "pc=~a count=~a target=~a stack-before=~a"
+                                              #,current-ln
+                                              count
+                                              target-pc
+                                              (next-stack->debug))
+                                      #:line #,current-ln)
                               (set! next-stack (drop next-stack count))
-                              (loop target-pc))]))]
+                              (loop (get-actual-next target-lbl target-pc))))))]
                     [((~datum forget) var)
                      #`(let* ([count var]
                               [drop-count (max 0 (min count (length next-stack)))])
-                         (trace! 'forget (format "pc=~a count=~a effective=~a stack-before=~a" #,current-ln count drop-count next-stack) #:line #,current-ln)
+                         (trace! 'forget (format "pc=~a count=~a effective=~a stack-before=~a" #,current-ln count drop-count (next-stack->debug)) #:line #,current-ln)
                          (set! next-stack (drop next-stack drop-count))
                          (loop (get-actual-next '#,lbl-val '#,next-ln-val)))]
                     [_ #`(loop (get-actual-next '#,lbl-val '#,next-ln-val))]))
@@ -1237,6 +1260,12 @@
          #,@var-definitions
          (define output-acc '())
          (define next-stack '())
+         (define (next-entry-pc entry)
+           (if (pair? entry) (car entry) entry))
+         (define (next-entry-lbl entry)
+           (if (pair? entry) (cdr entry) '_))
+         (define (next-stack->debug)
+           (map next-entry-pc next-stack))
          (define ignore-tbl (make-hash))
          (define debug? (sick-debug))
          (define debug-vars (sick-debug-vars))
@@ -1246,12 +1275,16 @@
          (define debug-node-roots (sick-debug-node-roots))
          (define debug-node-depth (sick-debug-node-depth))
          (define break-hit-target (max 1 (sick-break-hit)))
+         (define break-repeat-target
+           (let ([raw (sick-break-repeat)])
+             (and raw (max 1 raw))))
          (define max-steps (sick-max-steps))
          (define debug-history-limit (sick-debug-history-limit))
          (define tape-last-in 0)
          (define tape-last-out 0)
          (define recent-trace-events '())
          (define breakpoint-hit-counts (make-hash))
+         (define repeated-state-counts (make-hash))
          (define step-count 0)
 
          (define (remember-trace! line)
@@ -1298,12 +1331,12 @@
              (when (> step-count max-steps)
                (parameterize ([current-output-port (current-error-port)])
                  (fprintf (current-output-port)
-                          "[sick limit] max-steps=~a reached at pc=~a label=~a op=~s stack=~a\n"
+                         "[sick limit] max-steps=~a reached at pc=~a label=~a op=~s stack=~a\n"
                           max-steps
                           pc
                           (hash-ref rt-ln->lbl-map pc '_)
                           (hash-ref ln->op-map pc #f)
-                          next-stack))
+                          (next-stack->debug)))
                (dump-recent-trace!)
                (error (format "SICK max steps reached at line ~a" pc)))))
 
@@ -1314,6 +1347,14 @@
                 (let ([hit-count (add1 (hash-ref breakpoint-hit-counts maybe-line 0))])
                   (hash-set! breakpoint-hit-counts maybe-line hit-count)
                   (= hit-count break-hit-target))))
+
+         (define (repeated-state-break? pc)
+           (and break-repeat-target
+                pc
+                (let* ([sig (list pc next-stack)]
+                       [hit-count (add1 (hash-ref repeated-state-counts sig 0))])
+                  (hash-set! repeated-state-counts sig hit-count)
+                  (= hit-count break-repeat-target))))
 
          (define onespot-max #xffff)
          (define twospot-max #xffffffff)
@@ -1587,7 +1628,7 @@
                        natural-next-ln
                        (let ([chosen (list-ref active-hijackers (random (length active-hijackers)))])
                          ;; Hijackers count as executed, so they update state too!
-                         (trace! 'come-from (format "label=~a chosen=~a stack=~a" executed-lbl chosen next-stack) #:line chosen)
+                         (trace! 'come-from (format "label=~a chosen=~a stack=~a" executed-lbl chosen (next-stack->debug)) #:line chosen)
                          (update-state! chosen)
                          chosen))))
                natural-next-ln))
@@ -1595,14 +1636,15 @@
          (define (run)
            (let loop ([pc #,first-ln])
              (check-step-limit! pc)
-             (when (breakpoint-line? pc)
+             (when (or (breakpoint-line? pc)
+                       (repeated-state-break? pc))
                (parameterize ([current-output-port (current-error-port)])
                  (fprintf (current-output-port)
-                          "[sick breakpoint] pc=~a label=~a op=~s stack=~a\n"
+                         "[sick breakpoint] pc=~a label=~a op=~s stack=~a\n"
                           pc
                           (hash-ref rt-ln->lbl-map pc '_)
                           (hash-ref ln->op-map pc #f)
-                          next-stack)
+                          (next-stack->debug))
                  (for ([entry (in-list (debug-var-snapshots))])
                    (match-let ([(list sym val depth) entry])
                      (fprintf (current-output-port)
@@ -1622,7 +1664,7 @@
                              pc
                              (hash-ref rt-ln->lbl-map pc '_)
                              (hash-ref ln->op-map pc #f)
-                             next-stack)
+                             (next-stack->debug))
                      #:line pc)
              (case pc
                #,@case-clauses

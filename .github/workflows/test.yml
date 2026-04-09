@@ -84,3 +84,10 @@ jobs:
           ick -b life.i && ./life < life.in | awk 'NF' > life.out.ick
           racket life.i < life.in | awk 'NF' > life.out.rkt || true
           diff life.out.ick life.out.rkt
+
+      - name: Run unlambda.i test
+        run: |
+          printf '%s\n' '`r`````````.H.e.l.l.o._.w.o.r.l.d.i' > unlambda.in
+          ick -b unlambda.i && ./unlambda < unlambda.in > unlambda.out.ick
+          racket unlambda.i < unlambda.in > unlambda.out.rkt || true
+          diff unlambda.out.ick unlambda.out.rkt

@@ -63,6 +63,77 @@
  (call-with-values
   (thunk
    (sick-program
+    (20 (do (next 40)))
+    (30 (do (read-out (mesh 'I))))
+    (35 (please (give-up)))
+    (40 (do (read-out (mesh 'II))))
+    (45 (do (resume (mesh 'I))))
+    (50 (do (come-from 20)))
+    (60 (do (read-out (mesh 'III))))
+    (70 (please (give-up)))))
+  list)
+ (list 2 3)
+ "COME FROM on a NEXT line triggers only when the saved NEXT entry is RESUMEd to")
+
+(check-equal?
+ (call-with-values
+  (thunk
+   (sick-program
+    (20 (do (next 40)))
+    (30 (do (read-out (mesh 'I))))
+    (35 (please (give-up)))
+    (40 (do (read-out (mesh 'II))))
+    (45 (do (resume (mesh 'I))))
+    (50 (do (come-from 40)))
+    (60 (do (read-out (mesh 'III))))
+    (70 (please (give-up)))))
+  list)
+ (list 2 3)
+ "COME FROM on the NEXT target label fires after the target statement finishes")
+
+(check-equal?
+ (call-with-values
+  (thunk
+   (sick-program
+    (20 (do (next 40)))
+    (30 (do (read-out (mesh 'I))))
+    (35 (please (give-up)))
+    (40 (do (read-out (mesh 'II))))
+    (45 (do (forget (mesh 'I))))
+    (46 (please (give-up)))
+    (50 (do (come-from 20)))
+    (60 (do (read-out (mesh 'III))))
+    (70 (please (give-up)))))
+  list)
+ (list 2)
+ "FORGETting a NEXT entry prevents delayed COME FROM hijack")
+
+(check-equal?
+ (call-with-values
+  (thunk
+   (sick-program
+    (20 (do (next 60)))
+    (30 (do (read-out (mesh 'I))))
+    (35 (please (give-up)))
+    (60 (do (next 90)))
+    (70 (do (read-out (mesh 'II))))
+    (80 (please (give-up)))
+    (90 (do (read-out (mesh 'IV))))
+    (95 (do (resume (mesh 'II))))
+    (100 (do (come-from 20)))
+    (110 (do (read-out (mesh 'III))))
+    (120 (please (give-up)))
+    (130 (do (come-from 60)))
+    (140 (do (read-out (mesh 'V))))
+    (150 (please (give-up)))))
+  list)
+ (list 4 3)
+ "A larger RESUME only triggers delayed COME FROM for the entry actually resumed to")
+
+(check-equal?
+ (call-with-values
+  (thunk
+   (sick-program
     (10 (do (assign .RES (mesh 'V))))
     (20 (do (next 40)))
     (30 (please (give-up)))
@@ -87,6 +158,43 @@
   list)
  (list 2)
  "RESUME 1 returns to the most recent NEXT target")
+
+(check-equal?
+ (call-with-values
+  (thunk
+   (sick-program
+    (10 (do (assign .TWO (mesh 'II))))
+    (20 (do (next 60)))
+    (30 (do (read-out (mesh 'I))))
+    (40 (please (give-up)))
+    (60 (do (next 90)))
+    (70 (do (read-out (mesh 'II))))
+    (80 (please (give-up)))
+    (90 (do (resume .TWO)))))
+  list)
+ (list 1)
+ "RESUME 2 jumps to the last removed NEXT entry")
+
+(check-exn
+ exn:fail?
+ (thunk
+  (sick-program
+   (10 (do (assign .ZERO (mesh 'OH))))
+   (20 (do (next 40)))
+   (30 (please (give-up)))
+   (40 (do (resume .ZERO)))))
+ "RESUME 0 raises the INTERCAL error")
+
+(check-exn
+ exn:fail?
+ (thunk
+  (sick-program
+   (10 (do (assign .TWO (mesh 'II))))
+   (20 (do (next 50)))
+   (30 (do (resume .TWO)))
+   (40 (please (give-up)))
+   (50 (do (next 30)))))
+ "RESUME to the current line re-enters it, then ruptures the emptied NEXT stack")
 
 (check-equal?
  (call-with-values
