@@ -222,6 +222,15 @@
    (20 (please (give-up)))))
  "Assigning beyond twospot range raises E533")
 
+(check-exn
+ exn:fail?
+ (thunk
+  (parameterize ([current-input-port (open-input-string "")])
+    (sick-program
+     (10 (do (write-in .X)))
+     (20 (please (give-up))))))
+ "Numeric WRITE IN at EOF raises the INTERCAL error instead of a host exception")
+
 (check-equal?
  (call-with-values
   (thunk

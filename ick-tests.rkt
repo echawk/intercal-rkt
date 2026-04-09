@@ -1,7 +1,8 @@
 #lang racket
 (require rackunit
          "ick-driver.rkt"
-         "ick-normalize.rkt")
+         "ick-normalize.rkt"
+         "intercal.rkt")
 
 (define (parse* s)
   (syntax->datum (parse-intercal s)))
@@ -215,6 +216,48 @@
    (norm* "PLEASE TRY AGAIN")
    '(sick-program/syslib
      (please (try-again)))))
+
+(test-case "cleaner merges wrapped continuation lines"
+  (check-equal?
+   (clean-intercal-source
+    "DO :123 <- '\"?':123~\"#65535$#0\"'$#32768\"~\"#0$#65535\"'$\n        ':123~\"#0$#65535\"'\n")
+   "DO :123 <- '\"?':123~\"#65535$#0\"'$#32768\"~\"#0$#65535\"'$ ':123~\"#0$#65535\"'"))
+
+(test-case "wrapped float-style assignment parses after cleaning"
+  (check-equal?
+   (normalize-program
+    (syntax->datum
+     (parse-intercal
+      (clean-intercal-source
+       "DO :123 <- '\"?':123~\"#65535$#0\"'$#32768\"~\"#0$#65535\"'$\n        ':123~\"#0$#65535\"'\n"))))
+   '(sick-program/syslib
+     (do (assign :123
+                 (mingle
+                  (select
+                   (unary-xor
+                    (mingle
+                     (select :123 (mingle (mesh 65535) (mesh 0)))
+                     (mesh 32768)))
+                  (mingle (mesh 0) (mesh 65535)))
+                 (select :123 (mingle (mesh 0) (mesh 65535)))))))))
+
+(test-case "floatlib !V identifier form parses after cleaning"
+  (check-not-exn
+   (thunk
+    (normalize-program
+     (syntax->datum
+      (parse-intercal
+       (clean-intercal-source
+        "DO .1 <- '\"!V7$#512'~'#32768$#1023'\"$.2'~'#1536$#511'\n")))))))
+
+(test-case "flonck parses after cleaning"
+  (check-not-exn
+   (thunk
+    (normalize-program
+     (syntax->datum
+      (parse-intercal
+       (clean-intercal-source
+        (file->string "flonck.i"))))))))
 
 ;; ;; (test-case "unary binds tighter than SUB"
 ;; ;;   (norm* "10 DO .X <- & .A SUB 1"))

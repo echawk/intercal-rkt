@@ -68,7 +68,7 @@
   (define words
     (expand-packed-subscripts
      (regexp-match*
-      #px"\\(|\\)|<-|~|\\$|#|\\+|\\.|:|\\*|,|&|\\?|V|!|%|'|\"|[0-9]+|[A-Za-z]+"
+      #px"\\(|\\)|<-|~|\\$|#|\\+|\\.|:|\\*|,|&|\\?|!|%|'|\"|[0-9]+|[A-Za-z][A-Za-z0-9]*"
       clean-str)))
 
   (for/list ([w words])

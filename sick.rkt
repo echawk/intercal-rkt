@@ -2,7 +2,15 @@
 
 (require
  roman-numeral
- (for-syntax roman-numeral)
+ racket/list
+ racket/string
+ "ick-lexer.rkt"
+ "ick-bnf.rkt"
+  (for-syntax roman-numeral)
+ (for-syntax racket/list)
+ (for-syntax racket/string)
+ (for-syntax "ick-lexer.rkt")
+ (for-syntax "ick-bnf.rkt")
  (for-syntax racket/match)
  (for-syntax syntax/parse))
 
@@ -428,6 +436,210 @@
    (let ([raw (getenv "SICK_DEBUG_HISTORY")])
      (or (and raw (string->number (string-trim raw)))
          400))))
+
+(define intercal-clean-token-rx
+  #px"\\(|\\)|<-|~|\\$|#|\\+|\\.|:|\\*|,|;|&|\\?|!|%|'|\"|[0-9]+|[A-Za-z][A-Za-z0-9]*")
+
+(define intercal-prefix-tokens '("PLEASE" "DO" "NOT" "MAYBE" "%" "DON'T"))
+
+(define intercal-valid-start-rx
+  #px"^[ \t]*(?:\\([0-9]+\\)[ \t]*)?(?:(?:PLEASE|DO|NOT|DON'T|MAYBE|%[0-9]+)[ \t]*)+(?:STASH|RETRIEVE|IGNORE|REMEMBER|ABSTAIN|REINSTATE|FORGET|RESUME|READ|WRITE|COME|GIVE|TRY|NOTHING|[.:,;]|\\()")
+
+(define intercal-prefix-start-rx
+  #px"^[ \t]*(?:\\([0-9]+\\)[ \t]*)?(?:(?:PLEASE|DO|NOT|DON'T|MAYBE|%[0-9]+)[ \t]*)+")
+
+(define intercal-continuation-rx
+  #px"^[ \t]+[\"'?&V!#0-9.:,;~$A-Za-z+-]+$")
+
+(define intercal-incomplete-start-rx
+  #px"^(?:.*(?:<-|RESUME|FORGET|STASH|RETRIEVE|READ OUT|WRITE IN|ABSTAIN(?: [^ ]+)? FROM|REINSTATE|SUB|BY|\\$|~|&|V|\\?|['\"]))[ \t]*$")
+
+(define (intercal-cleanable-line? line)
+  (or (regexp-match? intercal-valid-start-rx line)
+      (regexp-match? intercal-prefix-start-rx line)
+      (regexp-match? intercal-continuation-rx line)))
+
+(define (merge-intercal-continuations str)
+  (define lines (string-split str "\n"))
+  (define logical-lines '())
+  (define current #f)
+  (define (flush-current!)
+    (when current
+      (set! logical-lines (cons current logical-lines))
+      (set! current #f)))
+  (for ([line (in-list lines)])
+    (cond
+      [(or (regexp-match? intercal-valid-start-rx line)
+           (regexp-match? intercal-prefix-start-rx line))
+       (flush-current!)
+       (set! current line)]
+      [(regexp-match? intercal-continuation-rx line)
+       (when current
+         (set! current
+               (string-append current " " (string-trim line))))]
+      [else
+       (flush-current!)]))
+  (flush-current!)
+  (reverse logical-lines))
+
+(define (parseable-line-prefix line)
+  (define tokens
+    (regexp-match*
+     intercal-clean-token-rx
+     (string-replace
+      (string-replace line "!" "'.")
+      "DON'T" "DO NOT")))
+  (for/or ([n (in-range (length tokens) 0 -1)])
+    (define candidate (string-join (take tokens n) " "))
+    (with-handlers ([exn:fail? (lambda (_) #f)])
+      (parse (tokenize (open-input-string candidate)))
+      candidate)))
+
+(define (fallback-nothing-line line)
+  (define tokens
+    (regexp-match*
+     intercal-clean-token-rx
+     (string-replace
+      (string-replace line "!" "'.")
+      "DON'T" "DO NOT")))
+  (define-values (label-prefix rest)
+    (if (and (>= (length tokens) 3)
+             (equal? (list-ref tokens 0) "(")
+             (regexp-match? #px"^[0-9]+$" (list-ref tokens 1))
+             (equal? (list-ref tokens 2) ")"))
+        (values (take tokens 3) (drop tokens 3))
+        (values '() tokens)))
+  (define prefix-only
+    (let loop ([ts rest] [acc '()])
+      (cond
+        [(null? ts) (reverse acc)]
+        [(equal? (car ts) "%")
+         (if (and (pair? (cdr ts))
+                  (regexp-match? #px"^[0-9]+$" (cadr ts)))
+             (loop (cddr ts) (cons (cadr ts) (cons "%" acc)))
+             (reverse acc))]
+        [(member (car ts) intercal-prefix-tokens)
+         (loop (cdr ts) (cons (car ts) acc))]
+        [else (reverse acc)])))
+  (and (pair? prefix-only)
+       (string-join (append label-prefix prefix-only '("NOTHING")) " ")))
+
+(define (clean-intercal-source str)
+  (define merged-lines (merge-intercal-continuations str))
+  (define cleaned-lines
+    (filter values
+            (map (lambda (line)
+                   (cond
+                     [(regexp-match? intercal-valid-start-rx line)
+                      (if (regexp-match? intercal-incomplete-start-rx line)
+                          line
+                          (parseable-line-prefix line))]
+                     [(regexp-match? intercal-prefix-start-rx line)
+                      (or (parseable-line-prefix line)
+                          (fallback-nothing-line line))]
+                     [else #f]))
+                 merged-lines)))
+  (string-join cleaned-lines "\n"))
+
+(begin-for-syntax
+  (define intercal-clean-token-rx
+    #px"\\(|\\)|<-|~|\\$|#|\\+|\\.|:|\\*|,|;|&|\\?|!|%|'|\"|[0-9]+|[A-Za-z][A-Za-z0-9]*")
+
+  (define intercal-prefix-tokens '("PLEASE" "DO" "NOT" "MAYBE" "%" "DON'T"))
+
+  (define intercal-valid-start-rx
+    #px"^[ \t]*(?:\\([0-9]+\\)[ \t]*)?(?:(?:PLEASE|DO|NOT|DON'T|MAYBE|%[0-9]+)[ \t]*)+(?:STASH|RETRIEVE|IGNORE|REMEMBER|ABSTAIN|REINSTATE|FORGET|RESUME|READ|WRITE|COME|GIVE|TRY|NOTHING|[.:,;]|\\()")
+
+  (define intercal-prefix-start-rx
+    #px"^[ \t]*(?:\\([0-9]+\\)[ \t]*)?(?:(?:PLEASE|DO|NOT|DON'T|MAYBE|%[0-9]+)[ \t]*)+")
+
+  (define intercal-continuation-rx
+    #px"^[ \t]+[\"'?&V!#0-9.:,;~$A-Za-z+-]+$")
+
+  (define intercal-incomplete-start-rx
+    #px"^(?:.*(?:<-|RESUME|FORGET|STASH|RETRIEVE|READ OUT|WRITE IN|ABSTAIN(?: [^ ]+)? FROM|REINSTATE|SUB|BY|\\$|~|&|V|\\?|['\"]))[ \t]*$")
+
+  (define (merge-intercal-continuations str)
+    (define lines (string-split str "\n"))
+    (define logical-lines '())
+    (define current #f)
+    (define (flush-current!)
+      (when current
+        (set! logical-lines (cons current logical-lines))
+        (set! current #f)))
+    (for ([line (in-list lines)])
+      (cond
+        [(or (regexp-match? intercal-valid-start-rx line)
+             (regexp-match? intercal-prefix-start-rx line))
+         (flush-current!)
+         (set! current line)]
+        [(regexp-match? intercal-continuation-rx line)
+         (when current
+           (set! current
+                 (string-append current " " (string-trim line))))]
+        [else
+         (flush-current!)]))
+    (flush-current!)
+    (reverse logical-lines))
+
+  (define (parseable-line-prefix line)
+    (define tokens
+      (regexp-match*
+       intercal-clean-token-rx
+       (string-replace
+        (string-replace line "!" "'.")
+        "DON'T" "DO NOT")))
+    (for/or ([n (in-range (length tokens) 0 -1)])
+      (define candidate (string-join (take tokens n) " "))
+      (with-handlers ([exn:fail? (lambda (_) #f)])
+        (parse (tokenize (open-input-string candidate)))
+        candidate)))
+
+  (define (fallback-nothing-line line)
+    (define tokens
+      (regexp-match*
+       intercal-clean-token-rx
+       (string-replace
+        (string-replace line "!" "'.")
+        "DON'T" "DO NOT")))
+    (define-values (label-prefix rest)
+      (if (and (>= (length tokens) 3)
+               (equal? (list-ref tokens 0) "(")
+               (regexp-match? #px"^[0-9]+$" (list-ref tokens 1))
+               (equal? (list-ref tokens 2) ")"))
+          (values (take tokens 3) (drop tokens 3))
+          (values '() tokens)))
+    (define prefix-only
+      (let loop ([ts rest] [acc '()])
+        (cond
+          [(null? ts) (reverse acc)]
+          [(equal? (car ts) "%")
+           (if (and (pair? (cdr ts))
+                    (regexp-match? #px"^[0-9]+$" (cadr ts)))
+               (loop (cddr ts) (cons (cadr ts) (cons "%" acc)))
+               (reverse acc))]
+          [(member (car ts) intercal-prefix-tokens)
+           (loop (cdr ts) (cons (car ts) acc))]
+          [else (reverse acc)])))
+    (and (pair? prefix-only)
+         (string-join (append label-prefix prefix-only '("NOTHING")) " ")))
+
+  (define (clean-intercal-source str)
+    (define merged-lines (merge-intercal-continuations str))
+    (define cleaned-lines
+      (filter values
+              (map (lambda (line)
+                     (cond
+                       [(regexp-match? intercal-valid-start-rx line)
+                        (if (regexp-match? intercal-incomplete-start-rx line)
+                            line
+                            (parseable-line-prefix line))]
+                       [(regexp-match? intercal-prefix-start-rx line)
+                        (or (parseable-line-prefix line)
+                            (fallback-nothing-line line))]
+                       [else #f]))
+                   merged-lines)))
+    (string-join cleaned-lines "\n")))
 
 (struct intercal-array (dimensions data) #:transparent)
 
@@ -1150,7 +1362,7 @@
          (define (read-number-input!)
            (define line (read-line))
            (when (eof-object? line)
-             (ick-err "E562"))
+             (runtime-fail (ick-err "E562")))
            (string->number
             (string-join
              (map number->string
@@ -1293,11 +1505,11 @@
               (define (fetch-field i j k)
                 (with-handlers ([exn:fail? (lambda (_) '<invalid>)])
                   (intercal-array-ref* maybe-node-store (list i j k))))
-              (define (walk root-name i j depth)
-                (define key (list i j))
-                (cond
-                  [(hash-ref seen key #f)
-                   (emit! "[sick node] root=~a depth=~a node=~s cycle"
+               (define (walk root-name i j depth)
+                 (define key (list i j))
+                 (cond
+                   [(hash-ref seen key #f)
+                    (emit! "[sick node] root=~a depth=~a node=~s cycle"
                           root-name depth key)]
                   [else
                    (hash-set! seen key #t)
@@ -1318,8 +1530,8 @@
                  (define idxs (map resolve-debug-sub-part spec))
                  (when (and (= (length idxs) 2)
                             (andmap integer? idxs))
-                  (walk idxs (car idxs) (cadr idxs) 0)))
-              (reverse lines)]))
+                   (walk idxs (car idxs) (cadr idxs) 0)))
+               (reverse lines)]))
 
          (define (get-ln-for-lbl target-lbl)
            (hash-ref lbl->ln-map
@@ -1436,106 +1648,6 @@
   (syntax-parse stx
     [(_ sick-line ...)
 
-     ;; What the fuck racket.
-     (define (clean-intercal-string str)
-       (define lines (string-split str "\n"))
-
-       ;; 1. Matches lines that start with a VALID operation or variable assignment.
-       ;; It ensures DO/PLEASE is immediately followed by a real command (STASH, etc) or a variable [.:,;]
-       (define valid-start-rx
-         #px"^[ \t]*(?:\\([0-9]+\\)[ \t]*)?(?:(?:PLEASE|DO|NOT|DON'T|MAYBE|%[0-9]+)[ \t]*)+(?:STASH|RETRIEVE|IGNORE|REMEMBER|ABSTAIN|REINSTATE|FORGET|RESUME|READ|WRITE|COME|GIVE|TRY|NOTHING|[.:,;]|\\()")
-
-       ;; 2. Matches multi-line continuations.
-       ;; These are indented lines containing ONLY valid INTERCAL math/logic symbols, quotes, and numbers.
-       ;; This cleanly catches wrapped math while rejecting "DOUBLE OR SINGLE PRECISION OVERFLOW"
-       (define continuation-rx
-         #px"^[ \t]+[\"'?&V!#0-9.:,~$\\s+-]+$")
-
-       (define cleaned-lines
-         (filter (lambda (l)
-                   (or (regexp-match? valid-start-rx l)
-                       (regexp-match? continuation-rx l)))
-                 lines))
-
-       (string-join cleaned-lines "\n"))
-
-     (define (clean-intercal-string/smart str)
-       (define lines (string-split str "\n"))
-       (define token-rx
-         #px"\\(|\\)|<-|~|\\$|#|\\+|\\.|:|\\*|,|;|&|\\?|V|!|%|'|\"|[0-9]+|[A-Za-z]+")
-       (define prefix-tokens '("PLEASE" "DO" "NOT" "MAYBE" "%" "DON'T"))
-
-       (define (parseable-line-prefix line)
-         (define tokens
-           (regexp-match*
-            token-rx
-            (string-replace
-             (string-replace line "!" "'.")
-             "DON'T" "DO NOT")))
-         (for/or ([n (in-range (length tokens) 0 -1)])
-           (define candidate (string-join (take tokens n) " "))
-           (with-handlers ([exn:fail? (lambda (_) #f)])
-             (parse (tokenize (open-input-string candidate)))
-             candidate)))
-
-       (define (fallback-nothing-line line)
-         (define tokens
-           (regexp-match*
-            token-rx
-            (string-replace
-             (string-replace line "!" "'.")
-             "DON'T" "DO NOT")))
-         (define-values (label-prefix rest)
-           (if (and (>= (length tokens) 3)
-                    (equal? (list-ref tokens 0) "(")
-                    (regexp-match? #px"^[0-9]+$" (list-ref tokens 1))
-                    (equal? (list-ref tokens 2) ")"))
-               (values (take tokens 3) (drop tokens 3))
-               (values '() tokens)))
-         (define prefix-only
-           (let loop ([ts rest] [acc '()])
-             (cond
-               [(null? ts) (reverse acc)]
-               [(equal? (car ts) "%")
-                (if (and (pair? (cdr ts))
-                         (regexp-match? #px"^[0-9]+$" (cadr ts)))
-                    (loop (cddr ts) (cons (cadr ts) (cons "%" acc)))
-                    (reverse acc))]
-               [(member (car ts) prefix-tokens)
-                (loop (cdr ts) (cons (car ts) acc))]
-               [else (reverse acc)])))
-         (and (pair? prefix-only)
-              (string-join (append label-prefix prefix-only '("NOTHING")) " ")))
-
-       (define valid-start-rx
-         #px"^[ \t]*(?:\\([0-9]+\\)[ \t]*)?(?:(?:PLEASE|DO|NOT|DON'T|MAYBE|%[0-9]+)[ \t]*)+(?:STASH|RETRIEVE|IGNORE|REMEMBER|ABSTAIN|REINSTATE|FORGET|RESUME|READ|WRITE|COME|GIVE|TRY|NOTHING|[.:,;]|\\()")
-
-       (define prefix-start-rx
-         #px"^[ \t]*(?:\\([0-9]+\\)[ \t]*)?(?:(?:PLEASE|DO|NOT|DON'T|MAYBE|%[0-9]+)[ \t]*)+")
-
-       (define continuation-rx
-         #px"^[ \t]+[\"'?&V!#0-9.:,;~$A-Za-z]+$")
-
-       (define incomplete-start-rx
-         #px"^(?:.*(?:<-|RESUME|FORGET|STASH|RETRIEVE|READ OUT|WRITE IN|ABSTAIN(?: [^ ]+)? FROM|REINSTATE|SUB|BY|\\$|~|&|V|\\?|['\"]))[ \t]*$")
-
-       (define cleaned-lines
-         (filter values
-                 (map (lambda (l)
-                        (cond
-                          [(regexp-match? valid-start-rx l)
-                           (if (regexp-match? incomplete-start-rx l)
-                               l
-                               (parseable-line-prefix l))]
-                          [(regexp-match? prefix-start-rx l)
-                           (or (parseable-line-prefix l)
-                               (fallback-nothing-line l))]
-                          [(regexp-match? continuation-rx l) l]
-                          [else #f]))
-                      lines)))
-
-       (string-join cleaned-lines "\n"))
-
      ;; 1. Get raw user AST
      (define raw-user-ast (syntax->datum #'(sick-line ...)))
 
@@ -1583,9 +1695,7 @@
 
      (define (load-library-ast path)
        (define cleaned-source
-         (if (regexp-match? #px"floatlib\\.i$" path)
-             (clean-intercal-string/smart (file->string path))
-             (clean-intercal-string (file->string path))))
+         (clean-intercal-source (file->string path)))
        (define parsed-ast
          (with-handlers ([exn:fail?
                           (lambda (e)
