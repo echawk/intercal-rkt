@@ -162,6 +162,24 @@
     <)
    '(10)))
 
+(test-case "ignore analysis marks only variables that can actually be ignored"
+  (check-equal?
+   (sort
+    (compute-ignore-guard-vars
+     '((10 _ do 100 #f #f #f (assign .X (mesh 1)))
+       (20 _ do 100 #f #f #f (read-out .X))
+       (30 _ do 100 #f #f #f (give-up))))
+    symbol<?)
+   '())
+  (check-equal?
+   (sort
+    (compute-ignore-guard-vars
+     '((10 _ do 100 #f #f #f (ignore .X |,A|))
+       (20 _ do 100 #f #f #f (remember .Y))
+       (30 _ do 100 #f #f #f (assign .X (mesh 1)))))
+    string<? #:key symbol->string)
+   '(|,A| .X .Y)))
+
 (define (expanded-sick-module-source stx)
   (format "~s"
           (syntax->datum
@@ -185,6 +203,25 @@
         (30 (please (give-up))))))
   (check-false (regexp-match? #rx"is-abstained\\?" no-abstain-source))
   (check-true (regexp-match? #rx"is-abstained\\?" with-abstain-source)))
+
+(test-case "ignore optimizer removes table lookups for non-ignorable variables"
+  (define no-ignore-source
+    (expanded-sick-module-source
+     #'(sick-program
+        (10 (do (assign .X (mesh 'I))))
+        (20 (do (write-in .X)))
+        (30 (do (retrieve .X)))
+        (40 (please (give-up))))))
+  (define with-ignore-source
+    (expanded-sick-module-source
+     #'(sick-program
+        (10 (do (ignore .X)))
+        (20 (do (assign .X (mesh 'I))))
+        (30 (do (write-in .X)))
+        (40 (do (retrieve .X)))
+        (50 (please (give-up))))))
+  (check-false (regexp-match? #rx"hash-ref ignore-tbl" no-ignore-source))
+  (check-true (regexp-match? #rx"hash-ref ignore-tbl" with-ignore-source)))
 
 ;; FIXME: fix test
 ;; (check-equal?

@@ -973,6 +973,30 @@
     [`(mesh ,(? exact-integer? n)) n]
     [_ #f]))
 
+(define (compute-ignore-guard-vars normalized-lines)
+  (remove-duplicates
+   (for/fold ([vars '()]) ([line (in-list normalized-lines)])
+     (match line
+       [`(,_ ,_ ,_ ,_ ,_ ,_ ,_ ,op)
+        (match op
+          [`(ignore ,vs ...)
+           (append vs vars)]
+          [`(remember ,vs ...)
+           (append vs vars)]
+          [_ vars])]))))
+
+(define-for-syntax (compute-ignore-guard-vars/stx normalized-lines)
+  (remove-duplicates
+   (for/fold ([vars '()]) ([line (in-list normalized-lines)])
+     (match line
+       [`(,_ ,_ ,_ ,_ ,_ ,_ ,_ ,op)
+        (match op
+          [`(ignore ,vs ...)
+           (append vs vars)]
+          [`(remember ,vs ...)
+           (append vs vars)]
+          [_ vars])]))))
+
 (define (compute-abstain-guard-lines normalized-lines)
   (define label->line
     (for/hash ([line (in-list normalized-lines)]
@@ -1150,6 +1174,9 @@
      (define abstain-guard-lines
        (compute-abstain-guard-lines/stx normalized-lines))
 
+     (define ignore-guard-vars
+       (compute-ignore-guard-vars/stx normalized-lines))
+
      (define first-ln (syntax-e (car (syntax->list #'(ln ...)))))
 
      (define ln->lbl-map
@@ -1205,15 +1232,21 @@
 
             (define compiled-op
               (syntax-parse current-op
-                [((~datum assign) var ((~datum dimension) dim ...))
+                 [((~datum assign) var ((~datum dimension) dim ...))
                  (let ([var-str (symbol->string (syntax-e #'var))])
+                   (define needs-ignore-guard?
+                     (member (syntax-e #'var) ignore-guard-vars))
                    (if (or (string-prefix? var-str "*")
                            (string-prefix? var-str ",")
                            (string-prefix? var-str ";"))
-                       #'(unless (hash-ref ignore-tbl (quote var) #f)
-                           (set! var (make-intercal-array (list dim ...))))
-                       #'(unless (hash-ref ignore-tbl (quote var) #f)
-                           (set! var (list dim ...)))))]
+                       (if needs-ignore-guard?
+                           #'(unless (hash-ref ignore-tbl (quote var) #f)
+                               (set! var (make-intercal-array (list dim ...))))
+                           #'(set! var (make-intercal-array (list dim ...))))
+                       (if needs-ignore-guard?
+                           #'(unless (hash-ref ignore-tbl (quote var) #f)
+                               (set! var (list dim ...)))
+                           #'(set! var (list dim ...)))))]
                 [((~datum assign) var val)
                  (let* ([target-datum (syntax->datum #'var)]
                         [var-str (and (symbol? target-datum) (symbol->string target-datum))])
@@ -1222,31 +1255,54 @@
                      [base
                       (define base-stx (datum->syntax stx base))
                       (define idx-stxs (map (lambda (idx) (datum->syntax stx idx)) idxs))
-                      #`(unless (hash-ref ignore-tbl (quote #,base-stx) #f)
-                          (trace! 'assign
-                                  (format "pc=~a target=~a idxs=~a value=~a" #,current-ln '#,base (list #,@idx-stxs) val)
-                                  #:line #,current-ln
-                                  #:var '#,base)
-                          (intercal-array-set!* #,base-stx
-                                                (list #,@idx-stxs)
-                                                (checked-element-store-value '#,base val)))]
+                      (if (member base ignore-guard-vars)
+                          #`(unless (hash-ref ignore-tbl (quote #,base-stx) #f)
+                              (trace! 'assign
+                                      (format "pc=~a target=~a idxs=~a value=~a" #,current-ln '#,base (list #,@idx-stxs) val)
+                                      #:line #,current-ln
+                                      #:var '#,base)
+                              (intercal-array-set!* #,base-stx
+                                                    (list #,@idx-stxs)
+                                                    (checked-element-store-value '#,base val)))
+                          #`(begin
+                              (trace! 'assign
+                                      (format "pc=~a target=~a idxs=~a value=~a" #,current-ln '#,base (list #,@idx-stxs) val)
+                                      #:line #,current-ln
+                                      #:var '#,base)
+                              (intercal-array-set!* #,base-stx
+                                                    (list #,@idx-stxs)
+                                                    (checked-element-store-value '#,base val))))]
                      [(and var-str
                            (or (string-prefix? var-str "*")
                                (string-prefix? var-str ",")
                                (string-prefix? var-str ";")))
-                      #`(unless (hash-ref ignore-tbl (quote var) #f)
-                          (trace! 'assign
-                                  (format "pc=~a target=~a value=~a" #,current-ln 'var val)
-                                  #:line #,current-ln
-                                  #:var 'var)
-                          (set! var (make-intercal-array (list val))))]
+                      (if (member target-datum ignore-guard-vars)
+                          #`(unless (hash-ref ignore-tbl (quote var) #f)
+                              (trace! 'assign
+                                      (format "pc=~a target=~a value=~a" #,current-ln 'var val)
+                                      #:line #,current-ln
+                                      #:var 'var)
+                              (set! var (make-intercal-array (list val))))
+                          #`(begin
+                              (trace! 'assign
+                                      (format "pc=~a target=~a value=~a" #,current-ln 'var val)
+                                      #:line #,current-ln
+                                      #:var 'var)
+                              (set! var (make-intercal-array (list val)))))]
                      [else
-                      #`(unless (hash-ref ignore-tbl (quote var) #f)
-                          (trace! 'assign
-                                  (format "pc=~a target=~a value=~a" #,current-ln '#,target-datum val)
-                                  #:line #,current-ln
-                                  #:var '#,target-datum)
-                          (set! var (checked-store-value '#,target-datum val)))]))]
+                      (if (member target-datum ignore-guard-vars)
+                          #`(unless (hash-ref ignore-tbl (quote var) #f)
+                              (trace! 'assign
+                                      (format "pc=~a target=~a value=~a" #,current-ln '#,target-datum val)
+                                      #:line #,current-ln
+                                      #:var '#,target-datum)
+                              (set! var (checked-store-value '#,target-datum val)))
+                          #`(begin
+                              (trace! 'assign
+                                      (format "pc=~a target=~a value=~a" #,current-ln '#,target-datum val)
+                                      #:line #,current-ln
+                                      #:var '#,target-datum)
+                              (set! var (checked-store-value '#,target-datum val))))]))]
                 [((~datum stash) var ...)
                  #`(begin
                      #,@(map (lambda (v)
@@ -1259,25 +1315,30 @@
                                      (set! #,vstack (cons #,v #,vstack)))))
                              (syntax->list #'(var ...))))]
                 [((~datum retrieve) var ...)
-                 #`(begin
-                     #,@(map (lambda (v)
-                               (let ([vstack (datum->syntax stx (string->symbol (string-append (symbol->string (syntax-e v)) "-stack")))])
-                                 #`(begin
-                                     (when (null? #,vstack)
-                                       (trace! 'retrieve-error
-                                               (format "pc=~a var=~a depth-before=0" #,current-ln '#,(syntax-e v))
-                                               #:line #,current-ln
-                                               #:var '#,(syntax-e v))
-                                       (runtime-fail (ick-err "E436")))
-                                     (let ([retrieved-val (car #,vstack)])
-                                       (trace! 'retrieve
-                                               (format "pc=~a var=~a value=~a depth-before=~a" #,current-ln '#,(syntax-e v) retrieved-val (length #,vstack))
-                                               #:line #,current-ln
-                                               #:var '#,(syntax-e v))
-                                       (set! #,vstack (cdr #,vstack))
-                                       (unless (hash-ref ignore-tbl (quote #,v) #f)
-                                         (set! #,v (checked-store-value '#,(syntax-e v) retrieved-val)))))))
-                             (syntax->list #'(var ...))))]
+                 (define retrieve-stxs
+                   (map (lambda (v)
+                          (let ([vstack (datum->syntax stx (string->symbol (string-append (symbol->string (syntax-e v)) "-stack")))])
+                            (define store-stx
+                              (if (member (syntax-e v) ignore-guard-vars)
+                                  #`(unless (hash-ref ignore-tbl (quote #,v) #f)
+                                      (set! #,v (checked-store-value '#,(syntax-e v) retrieved-val)))
+                                  #`(set! #,v (checked-store-value '#,(syntax-e v) retrieved-val))))
+                            #`(begin
+                                (when (null? #,vstack)
+                                  (trace! 'retrieve-error
+                                          (format "pc=~a var=~a depth-before=0" #,current-ln '#,(syntax-e v))
+                                          #:line #,current-ln
+                                          #:var '#,(syntax-e v))
+                                  (runtime-fail (ick-err "E436")))
+                                (let ([retrieved-val (car #,vstack)])
+                                  (trace! 'retrieve
+                                          (format "pc=~a var=~a value=~a depth-before=~a" #,current-ln '#,(syntax-e v) retrieved-val (length #,vstack))
+                                          #:line #,current-ln
+                                          #:var '#,(syntax-e v))
+                                  (set! #,vstack (cdr #,vstack))
+                                  #,store-stx))))
+                        (syntax->list #'(var ...))))
+                 #`(begin #,@retrieve-stxs)]
                 [((~datum ignore) var ...)
                  #`(begin
                      #,@(map (lambda (v) #`(hash-set! ignore-tbl (quote #,v) #t))
@@ -1290,7 +1351,7 @@
                 [((~datum write-in) var)
                  (let* ([target-datum (syntax->datum #'var)]
                         [var-str (and (symbol? target-datum) (symbol->string target-datum))]
-                        [ignored-expr (if var-str
+                        [ignored-expr (if (and var-str (member target-datum ignore-guard-vars))
                                           #`(hash-ref ignore-tbl (quote var) #f)
                                           #`#f)])
                    (define-values (base idxs) (extract-sub-target target-datum))
@@ -1298,16 +1359,23 @@
                      [base
                       (define base-stx (datum->syntax stx base))
                       (define idx-stxs (map (lambda (idx) (datum->syntax stx idx)) idxs))
-                      #`(let ([input-val (read-number-input!)])
-                          (unless (hash-ref ignore-tbl (quote #,base-stx) #f)
-                            (intercal-array-set!* #,base-stx
-                                                  (list #,@idx-stxs)
-                                                  (checked-element-store-value '#,base input-val))))]
+                      (if (member base ignore-guard-vars)
+                          #`(let ([input-val (read-number-input!)])
+                              (unless (hash-ref ignore-tbl (quote #,base-stx) #f)
+                                (intercal-array-set!* #,base-stx
+                                                      (list #,@idx-stxs)
+                                                      (checked-element-store-value '#,base input-val))))
+                          #`(let ([input-val (read-number-input!)])
+                              (intercal-array-set!* #,base-stx
+                                                    (list #,@idx-stxs)
+                                                    (checked-element-store-value '#,base input-val))))]
                      [(and var-str
                            (or (string-prefix? var-str "*")
                                (string-prefix? var-str ",")
                                (string-prefix? var-str ";")))
-                     #'(read-array-input! var (hash-ref ignore-tbl (quote var) #f))]
+                     (if (member target-datum ignore-guard-vars)
+                         #'(read-array-input! var (hash-ref ignore-tbl (quote var) #f))
+                         #'(read-array-input! var #f))]
                      [else
                       #`(let ([input-val (read-number-input!)])
                           (unless #,ignored-expr
