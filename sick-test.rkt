@@ -122,6 +122,70 @@
     (check-equal? (unary-xor-32 v)
                   (slow-intercal-unary bitwise-xor v 32))))
 
+(test-case "abstain analysis marks only lines that can actually be abstained"
+  (check-equal?
+   (sort
+    (compute-abstain-guard-lines
+     '((10 _ do 100 #f #f #f (assign .X (mesh 1)))
+       (20 _ do 100 #f #f #f (read-out .X))
+       (30 _ do 100 #f #f #f (give-up))))
+    <)
+   '())
+  (check-equal?
+   (sort
+    (compute-abstain-guard-lines
+     '((10 100 do 100 #f #f #f (assign .X (mesh 1)))
+       (20 _ do 100 #f #f #f (abstain 100))
+       (30 _ do 100 #f #f #f (read-out .X))))
+    <)
+   '(10))
+  (check-equal?
+   (sort
+    (compute-abstain-guard-lines
+     '((10 _ do 100 #f #f #f (read-out .X))
+       (20 _ do 100 #f #f #f (abstain-gerunds-once reading-out))
+       (30 _ do 100 #f #f #f (assign .X (mesh 1)))))
+    <)
+   '(10))
+  (check-equal?
+   (sort
+    (compute-abstain-guard-lines
+     '((10 _ do 100 #f #t #f (read-out .X))
+       (20 _ do 100 #f #f #f (give-up))))
+    <)
+   '(10))
+  (check-equal?
+   (sort
+    (compute-abstain-guard-lines
+     '((10 _ do 100 #t #f #f (give-up))
+       (20 _ do 100 #f #f #f (read-out .X))))
+    <)
+   '(10)))
+
+(define (expanded-sick-module-source stx)
+  (format "~s"
+          (syntax->datum
+           (expand
+            #`(module sick-expand-test racket
+                (require "sick.rkt")
+                #,stx)))))
+
+(test-case "abstain optimizer removes guard code from non-abstainable lines"
+  (define no-abstain-source
+    (expanded-sick-module-source
+     #'(sick-program
+        (10 (do (assign .X (mesh 'I))))
+        (20 (do (read-out .X)))
+        (30 (please (give-up))))))
+  (define with-abstain-source
+    (expanded-sick-module-source
+     #'(sick-program
+        (10 (do (assign .X (mesh 'I))))
+        (20 (do (abstain 10)))
+        (30 (please (give-up))))))
+  (check-false (regexp-match? #rx"is-abstained\\?" no-abstain-source))
+  (check-true (regexp-match? #rx"is-abstained\\?" with-abstain-source)))
+
 ;; FIXME: fix test
 ;; (check-equal?
 ;;  (call-with-values

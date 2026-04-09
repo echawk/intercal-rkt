@@ -919,6 +919,27 @@
                  stx
                  stx))
 
+(define (op->gerunds/runtime datum)
+  (match datum
+    [`(assign . ,_) '(calculating)]
+    [`(next . ,_) '(nexting)]
+    [`(read-out . ,_) '(reading-out)]
+    [`(write-in . ,_) '(writing-in)]
+    [`(stash . ,_) '(stashing)]
+    [`(retrieve . ,_) '(retrieving)]
+    [`(ignore . ,_) '(ignoring)]
+    [`(remember . ,_) '(remembering)]
+    [`(forget . ,_) '(forgetting)]
+    [`(resume . ,_) '(resuming)]
+    [`(abstain . ,_) '(abstaining)]
+    [`(abstain-count . ,_) '(abstaining)]
+    [`(abstain-gerunds-once . ,_) '(abstaining)]
+    [`(abstain-gerunds . ,_) '(abstaining)]
+    [`(reinstate . ,_) '(reinstating)]
+    [`(reinstate-gerunds . ,_) '(reinstating)]
+    [`(try-again) '(trying-again)]
+    [_ '()]))
+
 (define-for-syntax (op->gerunds datum)
   (match datum
     [`(assign . ,_) '(calculating)]
@@ -939,6 +960,132 @@
     [`(reinstate-gerunds . ,_) '(reinstating)]
     [`(try-again) '(trying-again)]
     [_ '()]))
+
+(define (static-target-label datum)
+  (match datum
+    [(? exact-integer? n) n]
+    [`(mesh ,(? exact-integer? n)) n]
+    [_ #f]))
+
+(define-for-syntax (static-target-label/stx datum)
+  (match datum
+    [(? exact-integer? n) n]
+    [`(mesh ,(? exact-integer? n)) n]
+    [_ #f]))
+
+(define (compute-abstain-guard-lines normalized-lines)
+  (define label->line
+    (for/hash ([line (in-list normalized-lines)]
+               #:when (match line [`(,_ ,lbl ,_ ,_ ,_ ,_ ,_ ,_) (not (eq? lbl '_))]))
+      (match line
+        [`(,ln ,lbl ,_ ,_ ,_ ,_ ,_ ,_)
+         (values lbl ln)])))
+  (define line->gerunds
+    (for/hash ([line (in-list normalized-lines)])
+      (match line
+        [`(,ln ,_ ,_ ,_ ,_ ,_ ,_ ,op)
+         (values ln (op->gerunds/runtime op))])))
+  (define targeted-labels
+    (for/fold ([labels '()]) ([line (in-list normalized-lines)])
+      (match line
+        [`(,_ ,_ ,_ ,_ ,_ ,_ ,_ ,op)
+         (match op
+           [`(abstain ,target)
+            (define maybe (static-target-label target))
+            (define target-line (and maybe (hash-ref label->line maybe #f)))
+            (if target-line (cons target-line labels) labels)]
+           [`(abstain-count ,_ ,target)
+            (define maybe (static-target-label target))
+            (define target-line (and maybe (hash-ref label->line maybe #f)))
+            (if target-line (cons target-line labels) labels)]
+           [`(reinstate ,target)
+            (define maybe (static-target-label target))
+            (define target-line (and maybe (hash-ref label->line maybe #f)))
+            (if target-line (cons target-line labels) labels)]
+           [_ labels])])))
+  (define targeted-gerunds
+    (for/fold ([gerunds '()]) ([line (in-list normalized-lines)])
+      (match line
+        [`(,_ ,_ ,_ ,_ ,_ ,_ ,_ ,op)
+         (match op
+           [`(abstain-gerunds-once ,gs ...)
+            (append gs gerunds)]
+           [`(abstain-gerunds ,_ ,gs ...)
+            (append gs gerunds)]
+           [`(reinstate-gerunds ,gs ...)
+            (append gs gerunds)]
+           [_ gerunds])])))
+  (remove-duplicates
+   (append
+    (for/list ([line (in-list normalized-lines)]
+               #:when (match line
+                        [`(,ln ,_ ,_ ,_ ,is-not ,is-once ,is-again ,_)
+                         (or is-not is-once is-again)]))
+      (match line [`(,ln ,_ ,_ ,_ ,_ ,_ ,_ ,_) ln]))
+    targeted-labels
+    (for/list ([line (in-list normalized-lines)]
+               #:when (match line
+                        [`(,ln ,_ ,_ ,_ ,_ ,_ ,_ ,_)
+                         (for/or ([g (in-list (hash-ref line->gerunds ln '()))])
+                           (member g targeted-gerunds))]))
+      (match line [`(,ln ,_ ,_ ,_ ,_ ,_ ,_ ,_) ln])))))
+
+(define-for-syntax (compute-abstain-guard-lines/stx normalized-lines)
+  (define label->line
+    (for/hash ([line (in-list normalized-lines)]
+               #:when (match line [`(,_ ,lbl ,_ ,_ ,_ ,_ ,_ ,_) (not (eq? lbl '_))]))
+      (match line
+        [`(,ln ,lbl ,_ ,_ ,_ ,_ ,_ ,_)
+         (values lbl ln)])))
+  (define line->gerunds
+    (for/hash ([line (in-list normalized-lines)])
+      (match line
+        [`(,ln ,_ ,_ ,_ ,_ ,_ ,_ ,op)
+         (values ln (op->gerunds op))])))
+  (define targeted-labels
+    (for/fold ([labels '()]) ([line (in-list normalized-lines)])
+      (match line
+        [`(,_ ,_ ,_ ,_ ,_ ,_ ,_ ,op)
+         (match op
+           [`(abstain ,target)
+            (define maybe (static-target-label/stx target))
+            (define target-line (and maybe (hash-ref label->line maybe #f)))
+            (if target-line (cons target-line labels) labels)]
+           [`(abstain-count ,_ ,target)
+            (define maybe (static-target-label/stx target))
+            (define target-line (and maybe (hash-ref label->line maybe #f)))
+            (if target-line (cons target-line labels) labels)]
+           [`(reinstate ,target)
+            (define maybe (static-target-label/stx target))
+            (define target-line (and maybe (hash-ref label->line maybe #f)))
+            (if target-line (cons target-line labels) labels)]
+           [_ labels])])))
+  (define targeted-gerunds
+    (for/fold ([gerunds '()]) ([line (in-list normalized-lines)])
+      (match line
+        [`(,_ ,_ ,_ ,_ ,_ ,_ ,_ ,op)
+         (match op
+           [`(abstain-gerunds-once ,gs ...)
+            (append gs gerunds)]
+           [`(abstain-gerunds ,_ ,gs ...)
+            (append gs gerunds)]
+           [`(reinstate-gerunds ,gs ...)
+            (append gs gerunds)]
+           [_ gerunds])])))
+  (remove-duplicates
+   (append
+    (for/list ([line (in-list normalized-lines)]
+               #:when (match line
+                        [`(,ln ,_ ,_ ,_ ,is-not ,is-once ,is-again ,_)
+                         (or is-not is-once is-again)]))
+      (match line [`(,ln ,_ ,_ ,_ ,_ ,_ ,_ ,_) ln]))
+    targeted-labels
+    (for/list ([line (in-list normalized-lines)]
+               #:when (match line
+                        [`(,ln ,_ ,_ ,_ ,_ ,_ ,_ ,_)
+                         (for/or ([g (in-list (hash-ref line->gerunds ln '()))])
+                           (member g targeted-gerunds))]))
+      (match line [`(,ln ,_ ,_ ,_ ,_ ,_ ,_ ,_) ln])))))
 
 
 (define-syntax (sick-program-core stx)
@@ -988,6 +1135,20 @@
                            [`(give-up) #t]
                            [_ #f]))
          (syntax-e l-ln)))
+
+     (define normalized-lines
+       (map list
+            (map syntax-e (syntax->list #'(ln ...)))
+            (map syntax-e (syntax->list #'(lbl ...)))
+            (map syntax-e (syntax->list #'(modifier ...)))
+            (map syntax-e (syntax->list #'(pct ...)))
+            (map syntax-e (syntax->list #'(is-not ...)))
+            (map syntax-e (syntax->list #'(is-once ...)))
+            (map syntax-e (syntax->list #'(is-again ...)))
+            (map syntax->datum ops)))
+
+     (define abstain-guard-lines
+       (compute-abstain-guard-lines/stx normalized-lines))
 
      (define first-ln (syntax-e (car (syntax->list #'(ln ...)))))
 
@@ -1039,6 +1200,8 @@
             (define is-again-val (syntax-e (car is-agains)))
             (define current-op (flatten-sub-stx (car operations)))
             (define next-ln-val (if (null? (cdr lns)) #f (syntax-e (cadr lns))))
+            (define needs-abstain-guard?
+              (member (syntax-e current-ln) abstain-guard-lines))
 
             (define compiled-op
               (syntax-parse current-op
@@ -1280,16 +1443,18 @@
                                (trace! 'chance-skip (format "pc=~a pct=~a roll=~a" #,current-ln #,pct-val roll) #:line #,current-ln)
                                #,natural-next-stx)))])
                   )
-                #`((#,current-ln)
-                   (let ([abstain-count (hash-ref abstain-tbl #,current-ln 0)])
-                     (define is-abstained? (positive? abstain-count))
-                     (if is-abstained?
-                         (begin
-                           ;; Skipped! Update state based on modifiers, and ALWAYS BROADCAST LABEL
-                           (trace! 'skip (format "pc=~a label=~a abstain-count=~a" #,current-ln '#,lbl-val abstain-count) #:line #,current-ln)
-                           #,(if (or is-once-val is-again-val) #`(update-state! #,current-ln) #`(void))
-                           #,natural-next-stx)
-                         #,execute-stx))))
+                (if needs-abstain-guard?
+                    #`((#,current-ln)
+                       (let ([abstain-count (hash-ref abstain-tbl #,current-ln 0)])
+                         (define is-abstained? (positive? abstain-count))
+                         (if is-abstained?
+                             (begin
+                               ;; Skipped! Update state based on modifiers, and ALWAYS BROADCAST LABEL
+                               (trace! 'skip (format "pc=~a label=~a abstain-count=~a" #,current-ln '#,lbl-val abstain-count) #:line #,current-ln)
+                               #,(if (or is-once-val is-again-val) #`(update-state! #,current-ln) #`(void))
+                               #,natural-next-stx)
+                             #,execute-stx)))
+                    #`((#,current-ln) #,execute-stx)))
                 )
 
             (cons branch (loop (cdr lns) (cdr lbls) (cdr pcts) (cdr is-onces) (cdr is-agains) (cdr operations)))])))
