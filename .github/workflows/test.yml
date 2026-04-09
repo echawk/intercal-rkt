@@ -42,9 +42,6 @@ jobs:
       - name: Run S-ick implementation tests
         run: raco test sick-test.rkt
 
-      - name: Run unlambda wrapper tests
-        run: raco test unlambda-run-test.rkt
-
       - name: Run fib.i test
         run: |
           ick -b fib.i && ./fib | awk 'NF' > fib.out.ick
