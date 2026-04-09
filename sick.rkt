@@ -277,6 +277,23 @@
          0
          bit-list))
 
+(define (width-mask width)
+  (case width
+    [(16) #xffff]
+    [(32) #xffffffff]
+    [else (sub1 (arithmetic-shift 1 width))]))
+
+(define (spread-mingle-16 n)
+  (define x0 (bitwise-and n #xffff))
+  (define x1 (bitwise-ior (arithmetic-shift (bitwise-and x0 #x0000ff00) 8)
+                          (bitwise-and x0 #x000000ff)))
+  (define x2 (bitwise-ior (arithmetic-shift (bitwise-and x1 #x00f000f0) 4)
+                          (bitwise-and x1 #x000f000f)))
+  (define x3 (bitwise-ior (arithmetic-shift (bitwise-and x2 #x0c0c0c0c) 2)
+                          (bitwise-and x2 #x03030303)))
+  (bitwise-ior (arithmetic-shift (bitwise-and x3 #x22222222) 1)
+               (bitwise-and x3 #x11111111)))
+
 (define (char-ascii? ch)
   (and (char? ch)
        (<= (char->integer ch) 127)))
@@ -286,22 +303,39 @@
        (for/and ([ch (in-string s)]) (char-ascii? ch))))
 
 (define (intercal-select val mask width)
-  (let* ([val-bits (int->bits val width)]
-         [mask-bits (int->bits mask width)]
-         ;; Keep val bits only where mask bit is 1
-         [selected-bits
-          (filter-map (lambda (v m) (if (= m 1) v #f))
-                      val-bits mask-bits)])
-    ;; bits->int naturally packs them to the right!
-    (bits->int selected-bits)))
+  (let loop ([r (bitwise-and val (width-mask width))]
+             [s (bitwise-and mask (width-mask width))]
+             [i 1]
+             [t 0])
+    (cond
+      [(zero? s) t]
+      [(positive? (bitwise-and s i))
+       (loop r
+             (bitwise-xor s i)
+             (arithmetic-shift i 1)
+             (bitwise-ior t (bitwise-and r i)))]
+      [else
+       (loop (arithmetic-shift r -1)
+             (arithmetic-shift s -1)
+             i
+             t)])))
 
 (define (intercal-mingle a b width)
-  (let ([a-bits (int->bits a width)]
-        [b-bits (int->bits b width)])
-    ;; Zip the lists together: '( (a1 b1) (a2 b2) ... )
-    ;; Then flatten them: '(a1 b1 a2 b2 ...)
-    (let ([mingled-bits (flatten (map list a-bits b-bits))])
-      (bits->int mingled-bits))))
+  (cond
+    [(= width 16)
+     (bitwise-ior (arithmetic-shift (spread-mingle-16 a) 1)
+                  (spread-mingle-16 b))]
+    [else
+     (define masked-a (bitwise-and a (width-mask width)))
+     (define masked-b (bitwise-and b (width-mask width)))
+     (for/fold ([result 0])
+               ([bit (in-range width)])
+       (define shift (* 2 bit))
+       (bitwise-ior result
+                    (arithmetic-shift (bitwise-and (arithmetic-shift masked-a (- bit)) 1)
+                                      (add1 shift))
+                    (arithmetic-shift (bitwise-and (arithmetic-shift masked-b (- bit)) 1)
+                                      shift)))]))
 
 
 (require rackunit)
@@ -309,11 +343,16 @@
 ;; (Assume the ALU functions from the previous response are defined here)
 
 (define (intercal-unary op-proc val width)
-  (let* ([bits (int->bits val width)]
-         ;; Right rotation: move the last bit to the front
-         [rotated-bits (cons (last bits) (drop-right bits 1))])
-    (let ([result-bits (map op-proc bits rotated-bits)])
-      (bits->int result-bits))))
+  (define mask (width-mask width))
+  (define masked-val (bitwise-and val mask))
+  (define rotated
+    (bitwise-and
+     (bitwise-ior (arithmetic-shift masked-val -1)
+                  (if (positive? (bitwise-and masked-val 1))
+                      (arithmetic-shift 1 (sub1 width))
+                      0))
+     mask))
+  (bitwise-and (op-proc masked-val rotated) mask))
 
 (define onespot-limit #xffff)
 

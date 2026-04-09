@@ -42,6 +42,9 @@ jobs:
       - name: Run S-ick implementation tests
         run: raco test sick-test.rkt
 
+      - name: Run unlambda wrapper tests
+        run: raco test unlambda-run-test.rkt
+
       - name: Run fib.i test
         run: |
           ick -b fib.i && ./fib | awk 'NF' > fib.out.ick
@@ -87,7 +90,7 @@ jobs:
 
       - name: Run unlambda.i test
         run: |
-          printf '%s\n' '`r`````````.H.e.l.l.o._.w.o.r.l.d.i' > unlambda.in
+          printf '%s\n' '`r```````````.H.e.l.l.o. .w.o.r.l.di' > unlambda.in
           ick -b unlambda.i && ./unlambda < unlambda.in > unlambda.out.ick
           racket unlambda.i < unlambda.in > unlambda.out.rkt || true
           diff unlambda.out.ick unlambda.out.rkt

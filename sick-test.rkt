@@ -25,6 +25,103 @@
   ;; (check-equal? (unary-or 5 ) 135 "Unary OR on 5")
   )
 
+(define (slow-int->bits n width)
+  (let loop ([n n] [w width] [acc '()])
+    (if (= w 0)
+        acc
+        (loop (arithmetic-shift n -1)
+              (sub1 w)
+              (cons (bitwise-and n 1) acc)))))
+
+(define (slow-bits->int bit-list)
+  (foldl (lambda (bit acc) (bitwise-ior (arithmetic-shift acc 1) bit))
+         0
+         bit-list))
+
+(define (slow-intercal-select val mask width)
+  (let* ([val-bits (slow-int->bits val width)]
+         [mask-bits (slow-int->bits mask width)]
+         [selected-bits
+          (filter-map (lambda (v m) (if (= m 1) v #f))
+                      val-bits mask-bits)])
+    (slow-bits->int selected-bits)))
+
+(define (slow-intercal-mingle a b width)
+  (define a-bits (slow-int->bits a width))
+  (define b-bits (slow-int->bits b width))
+  (slow-bits->int (flatten (map list a-bits b-bits))))
+
+(define (slow-intercal-unary op-proc val width)
+  (define bits (slow-int->bits val width))
+  (define rotated-bits (cons (last bits) (drop-right bits 1)))
+  (slow-bits->int (map op-proc bits rotated-bits)))
+
+(test-case "optimized bit operators preserve reference semantics"
+  (define sample-8 '(0 1 2 3 5 7 15 16 31 85 170 255))
+  (define sample-16 '(0 1 2 3 5 7 15 16 31 255 256 257 1023 32767 32768 65535))
+  (define sample-32 '(0 1 2 3 5 7 15 16 31 255 256 257 65535 65536 65537 2147483648 4294967295))
+
+  (for* ([a (in-list sample-8)]
+         [b (in-list sample-8)])
+    (check-equal? (intercal-mingle a b 8)
+                  (slow-intercal-mingle a b 8))
+    (check-equal? (intercal-select a b 8)
+                  (slow-intercal-select a b 8)))
+
+  (for* ([a (in-list sample-16)]
+         [b (in-list sample-16)])
+    (check-equal? (intercal-mingle a b 16)
+                  (slow-intercal-mingle a b 16))
+    (check-equal? (intercal-select a b 16)
+                  (slow-intercal-select a b 16))
+    (check-equal? (mingle-16 a b)
+                  (slow-intercal-mingle a b 16))
+    (check-equal? (select-16 a b)
+                  (slow-intercal-select a b 16)))
+
+  (for* ([a (in-list sample-32)]
+         [b (in-list sample-32)])
+    (check-equal? (intercal-select a b 32)
+                  (slow-intercal-select a b 32))
+    (check-equal? (select-32 a b)
+                  (slow-intercal-select a b 32)))
+
+  (for ([v (in-list sample-8)])
+    (check-equal? (intercal-unary bitwise-and v 8)
+                  (slow-intercal-unary bitwise-and v 8))
+    (check-equal? (intercal-unary bitwise-ior v 8)
+                  (slow-intercal-unary bitwise-ior v 8))
+    (check-equal? (intercal-unary bitwise-xor v 8)
+                  (slow-intercal-unary bitwise-xor v 8)))
+
+  (for ([v (in-list sample-16)])
+    (check-equal? (intercal-unary bitwise-and v 16)
+                  (slow-intercal-unary bitwise-and v 16))
+    (check-equal? (intercal-unary bitwise-ior v 16)
+                  (slow-intercal-unary bitwise-ior v 16))
+    (check-equal? (intercal-unary bitwise-xor v 16)
+                  (slow-intercal-unary bitwise-xor v 16))
+    (check-equal? (unary-and-16 v)
+                  (slow-intercal-unary bitwise-and v 16))
+    (check-equal? (unary-or-16 v)
+                  (slow-intercal-unary bitwise-ior v 16))
+    (check-equal? (unary-xor-16 v)
+                  (slow-intercal-unary bitwise-xor v 16)))
+
+  (for ([v (in-list sample-32)])
+    (check-equal? (intercal-unary bitwise-and v 32)
+                  (slow-intercal-unary bitwise-and v 32))
+    (check-equal? (intercal-unary bitwise-ior v 32)
+                  (slow-intercal-unary bitwise-ior v 32))
+    (check-equal? (intercal-unary bitwise-xor v 32)
+                  (slow-intercal-unary bitwise-xor v 32))
+    (check-equal? (unary-and-32 v)
+                  (slow-intercal-unary bitwise-and v 32))
+    (check-equal? (unary-or-32 v)
+                  (slow-intercal-unary bitwise-ior v 32))
+    (check-equal? (unary-xor-32 v)
+                  (slow-intercal-unary bitwise-xor v 32))))
+
 ;; FIXME: fix test
 ;; (check-equal?
 ;;  (call-with-values
