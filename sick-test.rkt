@@ -1,7 +1,37 @@
 #lang racket
 (require roman-numeral)
 (require rackunit)
+(require racket/system)
 (require "sick.rkt")
+
+(define (run-racket-file path [stdin ""])
+  (define racket-exe
+    (or (find-executable-path "racket")
+        (error "Could not locate racket executable")))
+  (define-values (proc out in err)
+    (subprocess #f #f #f racket-exe path))
+  (display stdin in)
+  (close-output-port in)
+  (define stdout (port->string out))
+  (define stderr (port->string err))
+  (close-input-port out)
+  (close-input-port err)
+  (subprocess-wait proc)
+  (values (subprocess-status proc) stdout stderr))
+
+(define (run-shell-command cmd)
+  (define shell-exe
+    (or (find-executable-path "sh")
+        (error "Could not locate sh executable")))
+  (define-values (proc out in err)
+    (subprocess #f #f #f shell-exe "-lc" cmd))
+  (close-output-port in)
+  (define stdout (port->string out))
+  (define stderr (port->string err))
+  (close-input-port out)
+  (close-input-port err)
+  (subprocess-wait proc)
+  (values (subprocess-status proc) stdout stderr))
 
 
 (test-case "INTERCAL Bitwise Operations"

@@ -22,12 +22,12 @@
     ))
 
 (define (simple-subscript-start? w)
-  (member w '("." ":" "," "*" "#")))
+  (member w '("." ":" "," "*" ";" "#")))
 
 (define (consume-simple-subscript words start)
   (define first (list-ref words start))
   (cond
-    [(member first '("." ":" "," "*"))
+    [(member first '("." ":" "," "*" ";"))
      (values (take (drop words start) 2) (+ start 2))]
     [(equal? first "#")
      (values (take (drop words start) 2) (+ start 2))]
@@ -68,7 +68,7 @@
   (define words
     (expand-packed-subscripts
      (regexp-match*
-      #px"\\(|\\)|<-|~|\\$|#|\\+|\\.|:|\\*|,|&|\\?|!|%|'|\"|[0-9]+|[A-Za-z][A-Za-z0-9]*"
+      #px"\\(|\\)|<-|~|\\$|#|\\+|\\.|:|\\*|;|,|&|\\?|!|%|'|\"|[0-9]+|[A-Za-z][A-Za-z0-9]*"
       clean-str)))
 
   (for/list ([w words])
@@ -81,6 +81,7 @@
       [(equal? w ".") (token 'DOT w)]
       [(equal? w ":") (token 'COLON w)]
       [(equal? w "*") (token 'STAR w)]
+      [(equal? w ";") (token 'SEMICOLON w)]
       [(equal? w ",") (token 'COMMA w)]
       [(equal? w "<-") (token 'GETS w)]
       [(equal? w "#") (token 'MESH w)]

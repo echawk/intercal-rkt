@@ -87,6 +87,16 @@
      (10 (do (assign (sub (sub (sub |,201| |.201|) |.202|) (mesh 7))
                      (sub (sub (sub |,202| |.201|) |.202|) (mesh 7))))))))
 
+(test-case "semicolon array subscript in expression"
+  (check-equal?
+   (norm*
+    "(10) DO :1 <- ;1SUB!1~#65532'")
+   '(sick-program/syslib
+     (10 (do (assign :1
+                     (sub |;1|
+                          (select |.1|
+                                  (mesh 65532)))))))))
+
 ;; (test-case "sub in expr"
 ;;   (parse*
 ;;    "10 DO :X <- .I SUB 1"))

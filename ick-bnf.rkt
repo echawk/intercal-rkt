@@ -92,6 +92,7 @@ ident : NUMBER | ID
 var : DOT ident
     | STAR ident
     | COLON ident
+    | SEMICOLON ident
     | COMMA ident
     | var SUB sublist
 

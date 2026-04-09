@@ -860,12 +860,153 @@
      32]
     [else 16]))
 
+(define-for-syntax onespot-limit/stx #xffff)
+
+(define-for-syntax (bit-count n)
+  (let loop ([v (if (exact-integer? n) (abs n) 0)] [count 0])
+    (if (zero? v)
+        count
+        (loop (arithmetic-shift v -1)
+              (+ count (bitwise-and v 1))))))
+
+(define-for-syntax (ct-width-mask width)
+  (case width
+    [(16) #xffff]
+    [(32) #xffffffff]
+    [else (sub1 (arithmetic-shift 1 width))]))
+
+(define-for-syntax (ct-spread-mingle-16 n)
+  (for/fold ([result 0])
+            ([bit (in-range 16)])
+    (bitwise-ior result
+                 (arithmetic-shift
+                  (bitwise-and (arithmetic-shift n (- bit)) 1)
+                  (* 2 bit)))))
+
+(define-for-syntax (ct-intercal-mingle a b width)
+  (cond
+    [(= width 16)
+     (bitwise-ior (arithmetic-shift (ct-spread-mingle-16 a) 1)
+                  (ct-spread-mingle-16 b))]
+    [else
+     (define masked-a (bitwise-and a (ct-width-mask width)))
+     (define masked-b (bitwise-and b (ct-width-mask width)))
+     (for/fold ([result 0])
+               ([bit (in-range width)])
+       (define shift (* 2 bit))
+       (bitwise-ior result
+                    (arithmetic-shift (bitwise-and (arithmetic-shift masked-a (- bit)) 1)
+                                      (add1 shift))
+                    (arithmetic-shift (bitwise-and (arithmetic-shift masked-b (- bit)) 1)
+                                      shift)))]))
+
+(define-for-syntax (ct-intercal-select val mask width)
+  (let loop ([r (bitwise-and val (ct-width-mask width))]
+             [s (bitwise-and mask (ct-width-mask width))]
+             [out 0]
+             [shift 0])
+    (cond
+      [(zero? s) out]
+      [else
+       (define next-out
+         (if (positive? (bitwise-and s 1))
+             (bitwise-ior out (arithmetic-shift (bitwise-and r 1) shift))
+             out))
+       (loop (arithmetic-shift r -1)
+             (arithmetic-shift s -1)
+             next-out
+             (if (positive? (bitwise-and s 1)) (add1 shift) shift))])))
+
+(define-for-syntax (ct-intercal-unary op-proc val width)
+  (define mask (ct-width-mask width))
+  (define masked-val (bitwise-and val mask))
+  (define rotated
+    (bitwise-and
+     (bitwise-ior (arithmetic-shift masked-val -1)
+                  (if (positive? (bitwise-and masked-val 1))
+                      (arithmetic-shift 1 (sub1 width))
+                      0))
+     mask))
+  (bitwise-and (op-proc masked-val rotated) mask))
+
+(define-for-syntax (const-expr-value datum)
+  (match datum
+    [`(mesh ,(? exact-integer? n)) n]
+    [`(mingle ,lhs ,rhs)
+     (define lhs-val (const-expr-value lhs))
+     (define rhs-val (const-expr-value rhs))
+     (and lhs-val rhs-val
+          (ct-intercal-mingle lhs-val rhs-val
+                              (if (or (> lhs-val onespot-limit/stx)
+                                      (> rhs-val onespot-limit/stx))
+                                  32
+                                  16)))]
+    [`(mingle-16 ,lhs ,rhs)
+     (define lhs-val (const-expr-value lhs))
+     (define rhs-val (const-expr-value rhs))
+     (and lhs-val rhs-val
+          (ct-intercal-mingle lhs-val rhs-val 16))]
+    [`(select ,lhs ,rhs)
+     (define lhs-val (const-expr-value lhs))
+     (define rhs-val (const-expr-value rhs))
+     (and lhs-val rhs-val
+          (ct-intercal-select lhs-val rhs-val
+                              (if (> lhs-val onespot-limit/stx) 32 16)))]
+    [`(select-16 ,lhs ,rhs)
+     (define lhs-val (const-expr-value lhs))
+     (define rhs-val (const-expr-value rhs))
+     (and lhs-val rhs-val
+          (ct-intercal-select lhs-val rhs-val 16))]
+    [`(select-32 ,lhs ,rhs)
+     (define lhs-val (const-expr-value lhs))
+     (define rhs-val (const-expr-value rhs))
+     (and lhs-val rhs-val
+          (ct-intercal-select lhs-val rhs-val 32))]
+    [`(unary-and ,rhs)
+     (define rhs-val (const-expr-value rhs))
+     (and rhs-val
+          (ct-intercal-unary bitwise-and rhs-val
+                             (if (> rhs-val onespot-limit/stx) 32 16)))]
+    [`(unary-or ,rhs)
+     (define rhs-val (const-expr-value rhs))
+     (and rhs-val
+          (ct-intercal-unary bitwise-ior rhs-val
+                             (if (> rhs-val onespot-limit/stx) 32 16)))]
+    [`(unary-xor ,rhs)
+     (define rhs-val (const-expr-value rhs))
+     (and rhs-val
+          (ct-intercal-unary bitwise-xor rhs-val
+                             (if (> rhs-val onespot-limit/stx) 32 16)))]
+    [`(unary-and-16 ,rhs)
+     (define rhs-val (const-expr-value rhs))
+     (and rhs-val (ct-intercal-unary bitwise-and rhs-val 16))]
+    [`(unary-and-32 ,rhs)
+     (define rhs-val (const-expr-value rhs))
+     (and rhs-val (ct-intercal-unary bitwise-and rhs-val 32))]
+    [`(unary-or-16 ,rhs)
+     (define rhs-val (const-expr-value rhs))
+     (and rhs-val (ct-intercal-unary bitwise-ior rhs-val 16))]
+    [`(unary-or-32 ,rhs)
+     (define rhs-val (const-expr-value rhs))
+     (and rhs-val (ct-intercal-unary bitwise-ior rhs-val 32))]
+    [`(unary-xor-16 ,rhs)
+     (define rhs-val (const-expr-value rhs))
+     (and rhs-val (ct-intercal-unary bitwise-xor rhs-val 16))]
+    [`(unary-xor-32 ,rhs)
+     (define rhs-val (const-expr-value rhs))
+     (and rhs-val (ct-intercal-unary bitwise-xor rhs-val 32))]
+    [_ #f]))
+
 (define-for-syntax (expr-width datum)
   (match datum
     [`(mesh ,_) 16]
     [`(mingle ,_ ,_) 32]
     [`(mingle-16 ,_ ,_) 32]
-    [`(select ,_ ,rhs) (expr-width rhs)]
+    [`(select ,lhs ,rhs)
+     (define rhs-val (const-expr-value rhs))
+     (if rhs-val
+         (if (> (bit-count rhs-val) 16) 32 16)
+         (expr-width lhs))]
     [`(select-16 ,_ ,_) 16]
     [`(select-32 ,_ ,_) 32]
     [`(unary-and ,rhs) (expr-width rhs)]
@@ -888,10 +1029,11 @@
        ,(rewrite-width-aware-ops lhs)
        ,(rewrite-width-aware-ops rhs))]
     [`(select ,lhs ,rhs)
+     (define rewritten-lhs (rewrite-width-aware-ops lhs))
      (define rewritten-rhs (rewrite-width-aware-ops rhs))
-     (define width (expr-width rewritten-rhs))
+     (define width (expr-width `(select ,rewritten-lhs ,rewritten-rhs)))
      `(,(if (= width 32) 'select-32 'select-16)
-       ,(rewrite-width-aware-ops lhs)
+       ,rewritten-lhs
        ,rewritten-rhs)]
     [`(unary-and ,rhs)
      (define rewritten-rhs (rewrite-width-aware-ops rhs))

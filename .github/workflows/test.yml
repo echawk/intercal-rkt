@@ -91,3 +91,10 @@ jobs:
           ick -b unlambda.i && ./unlambda < unlambda.in > unlambda.out.ick
           racket unlambda.i < unlambda.in > unlambda.out.rkt || true
           diff unlambda.out.ick unlambda.out.rkt
+
+      - name: Run rot13.i test
+        run: |
+          printf 'hello\n' > rot13.in
+          ick -b rot13.i && ./rot13 < rot13.in > rot13.out.ick
+          racket rot13.i < rot13.in > rot13.out.rkt || true
+          diff rot13.out.ick rot13.out.rkt
