@@ -997,6 +997,28 @@
            (append vs vars)]
           [_ vars])]))))
 
+(define (compute-come-from-guard-labels normalized-lines)
+  (remove-duplicates
+   (for/fold ([labels '()]) ([line (in-list normalized-lines)])
+     (match line
+       [`(,_ ,_ ,_ ,_ ,_ ,_ ,_ ,op)
+        (match op
+          [`(come-from ,target)
+           (define maybe (static-target-label target))
+           (if maybe (cons maybe labels) labels)]
+          [_ labels])]))))
+
+(define-for-syntax (compute-come-from-guard-labels/stx normalized-lines)
+  (remove-duplicates
+   (for/fold ([labels '()]) ([line (in-list normalized-lines)])
+     (match line
+       [`(,_ ,_ ,_ ,_ ,_ ,_ ,_ ,op)
+        (match op
+          [`(come-from ,target)
+           (define maybe (static-target-label/stx target))
+           (if maybe (cons maybe labels) labels)]
+          [_ labels])]))))
+
 (define (compute-abstain-guard-lines normalized-lines)
   (define label->line
     (for/hash ([line (in-list normalized-lines)]
@@ -1177,6 +1199,9 @@
      (define ignore-guard-vars
        (compute-ignore-guard-vars/stx normalized-lines))
 
+     (define come-from-guard-labels
+       (compute-come-from-guard-labels/stx normalized-lines))
+
      (define first-ln (syntax-e (car (syntax->list #'(ln ...)))))
 
      (define ln->lbl-map
@@ -1229,6 +1254,10 @@
             (define next-ln-val (if (null? (cdr lns)) #f (syntax-e (cadr lns))))
             (define needs-abstain-guard?
               (member (syntax-e current-ln) abstain-guard-lines))
+            (define can-be-hijacked?
+              (let ([lbl-val (syntax-e current-lbl)])
+                (and (not (eq? lbl-val '_))
+                     (member lbl-val come-from-guard-labels))))
 
             (define compiled-op
               (syntax-parse current-op
@@ -1435,11 +1464,15 @@
             (define branch
               (let ([lbl-val (syntax-e current-lbl)]
                     [pct-val (syntax-e current-pct)])
+                (define default-next-stx
+                  (if can-be-hijacked?
+                      #`(loop (get-actual-next '#,lbl-val '#,next-ln-val))
+                      #`(loop '#,next-ln-val)))
                 (define natural-next-stx
                   (syntax-parse current-op
                     [((~datum try-again)) #`(apply values (reverse output-acc))]
                     [(~datum try-again)   #`(apply values (reverse output-acc))]
-                    [_ #`(loop (get-actual-next '#,lbl-val '#,next-ln-val))]))
+                    [_ default-next-stx]))
                 (define continue-stx
                   (syntax-parse current-op
                     [((~datum give-up)) #`(apply values (reverse output-acc))]

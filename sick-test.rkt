@@ -180,6 +180,25 @@
     string<? #:key symbol->string)
    '(|,A| .X .Y)))
 
+(test-case "COME FROM analysis marks only labels that can actually be hijacked"
+  (check-equal?
+   (sort
+    (compute-come-from-guard-labels
+     '((10 _ do 100 #f #f #f (assign .X (mesh 1)))
+       (20 _ do 100 #f #f #f (read-out .X))
+       (30 _ do 100 #f #f #f (give-up))))
+    <)
+   '())
+  (check-equal?
+   (sort
+    (compute-come-from-guard-labels
+     '((10 100 do 100 #f #f #f (assign .X (mesh 1)))
+       (20 _ do 100 #f #f #f (come-from 100))
+       (30 200 do 100 #f #f #f (read-out .X))
+       (40 _ do 100 #f #f #f (come-from (mesh 200)))))
+    <)
+   '(100 200)))
+
 (define (expanded-sick-module-source stx)
   (format "~s"
           (syntax->datum

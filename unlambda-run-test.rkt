@@ -39,3 +39,11 @@
   (check-equal? status 0)
   (check-equal? stdout "Hello world\n")
   (check-equal? stderr ""))
+
+(test-case "INTERCAL modules export intercal-main without running at require time"
+  (define intercal-main
+    (parameterize ([current-output-port (open-output-string)])
+      (dynamic-require "hello.i" 'intercal-main)))
+  (check-pred procedure? intercal-main)
+  (check-equal? (with-output-to-string intercal-main)
+                "hello, world\n"))
