@@ -42,6 +42,9 @@ jobs:
       - name: Run S-ick implementation tests
         run: raco test sick-test.rkt
 
+      - name: Run package language tests
+        run: raco test package-lang-test.rkt
+
       - name: Run fib.i test
         run: |
           ick -b fib.i && ./fib | awk 'NF' > fib.out.ick

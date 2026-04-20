@@ -2,6 +2,7 @@
 
 (provide (except-out (all-from-out racket) read read-syntax)
          (all-from-out "sick.rkt")
+         current-intercal-language-module-path
          (rename-out [intercal-read read]
                      [intercal-read-syntax read-syntax]))
 
@@ -11,6 +12,8 @@
          "ick-normalize.rkt")
 
 (define clean-intercal-string clean-intercal-source)
+(define current-intercal-language-module-path
+  (make-parameter "intercal.rkt"))
 
 ;; 2. THE READER FUNCTIONS
 (define (intercal-read in)
@@ -26,7 +29,7 @@
         ;; Explicitly build the module, using #'module to guarantee
         ;; Racket recognizes it as a core module declaration.
         (datum->syntax #f
-         `(,#'module intercal-mod "intercal.rkt"
+         `(,#'module intercal-mod ,(current-intercal-language-module-path)
             (provide intercal-main)
             (define (intercal-main)
               (call-with-values (lambda () ,normalized-ast)
