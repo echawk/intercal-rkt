@@ -52,6 +52,334 @@ including @filepath{pit/fib.i}, @filepath{pit/hanoi.i}, @filepath{pit/hello.i},
 For a worked example aimed at writing new programs, see
 @filepath{scribblings/programming-intercal.scrbl}.
 
+@section{The INTERCAL Model}
+
+This implementation is easiest to understand if you treat an INTERCAL program
+as a labeled state machine over mutable variables.
+
+Each source line has:
+
+@itemlist[
+ @item{an optional numeric label such as @tt{(100)},}
+ @item{a core operation such as assignment, @tt{NEXT}, or @tt{READ OUT}, and}
+ @item{optional modifiers such as @tt{PLEASE}, @tt{NOT}, @tt{ONCE}, or
+       a chance prefix like @tt{%50}.}]
+
+Execution starts at the first runtime line and normally falls through to the
+next runtime line. Labels are entry points for control flow, not separate
+blocks in the Racket sense.
+
+@subsection{Data model}
+
+The frontend accepts the standard INTERCAL variable classes:
+
+@itemlist[
+ @item{@tt{.name}: onespot scalar values,}
+ @item{@tt{:name}: twospot scalar values,}
+ @item{@tt{,name}: onespot arrays,}
+ @item{@tt{;name}: twospot arrays, and}
+ @item{@tt{*name}: frontend-supported array identifiers that are treated as
+       onespot-valued by the runtime.}]
+
+For programmers coming from Racket, the key fact is that values are fixed-width
+machine-style integers rather than arbitrary-precision integers. The runtime
+checks stores:
+
+@itemlist[
+ @item{onespot targets must fit in @tt{0..65535},}
+ @item{twospot targets must fit in @tt{0..4294967295}, and}
+ @item{storing a twospot-sized value into a onespot target raises the
+       corresponding INTERCAL error instead of silently truncating.}]
+
+Arrays are dimensioned with @tt{BY} and indexed with @tt{SUB}. A declaration
+such as
+
+@verbatim|{
+DO ,1 <- #10 BY #20
+}|
+
+creates a two-dimensional array, and a use such as
+
+@verbatim|{
+DO ,1 SUB #3 SUB #4 <- #99
+}|
+
+stores into a particular cell.
+
+@subsection{Expressions}
+
+The supported expression language is intentionally small:
+
+@itemlist[
+ @item{integer literals like @tt{5},}
+ @item{mesh literals like @tt{#5},}
+ @item{variables and subscripted array references,}
+ @item{@tt{$} for @italic{MINGLE},}
+ @item{@tt{~} for @italic{SELECT},}
+ @item{unary @tt{&}, @tt{V}, and @tt{?}, and}
+ @item{single-quote and double-quote grouping.}]
+
+The important semantic point is that these are bit-structured operations, not
+ordinary arithmetic operators:
+
+@itemlist[
+ @item{@tt{a $ b} interleaves the bits of @tt{a} and @tt{b}.}
+ @item{@tt{a ~ b} selects the bits of @tt{a} at positions where @tt{b} has
+       ones, then packs them together.}
+ @item{@tt{&}, @tt{V}, and @tt{?} combine a value with a one-bit rotation of
+       itself.}]
+
+This is why many real INTERCAL programs route ordinary arithmetic through
+@filepath{syslib.i} rather than trying to express everything directly.
+
+@subsection{Control flow}
+
+The control-flow model is the heart of INTERCAL. The core operations are
+@tt{NEXT}, @tt{RESUME}, @tt{FORGET}, @tt{COME FROM}, @tt{TRY AGAIN}, and
+@tt{GIVE UP}.
+
+@subsubsection{NEXT and RESUME}
+
+@tt{NEXT} acts like a subroutine call. Executing
+
+@verbatim|{
+DO (200) NEXT
+}|
+
+pushes the following runtime line onto the NEXT stack and transfers control to
+label @tt{(200)}.
+
+@tt{RESUME} unwinds that stack. A statement such as
+
+@verbatim|{
+DO RESUME #2
+}|
+
+removes two saved continuations and jumps to the last one removed.
+
+The important edge cases are:
+
+@itemlist[
+ @item{@tt{RESUME #1} returns to the most recent @tt{NEXT} continuation.}
+ @item{@tt{RESUME #2} skips one saved continuation and returns to the next one
+       below it.}
+ @item{@tt{RESUME #0} is an error.}
+ @item{Resuming past the end of the NEXT stack raises the standard stack
+       rupture error.}]
+
+This implementation has explicit regression tests for these cases in
+@filepath{tests/sick-test.rkt}.
+
+@subsubsection{FORGET}
+
+@tt{FORGET} discards continuations without transferring control. For example,
+
+@verbatim|{
+DO FORGET #1
+}|
+
+removes one saved NEXT entry. The implementation follows C-INTERCAL here:
+forgetting more entries than are currently present saturates instead of raising
+ an error.
+
+@subsubsection{COME FROM}
+
+@tt{COME FROM} is the inverse of a goto-like jump. A line such as
+
+@verbatim|{
+(500) DO COME FROM (100)
+}|
+
+registers line @tt{(500)} as a hijacker for transfers that reach label
+@tt{(100)}. Operationally:
+
+@itemlist[
+ @item{the target line still executes,}
+ @item{after that line completes, control may be redirected to the matching
+       @tt{COME FROM} line, and}
+ @item{the runtime keeps explicit label-to-hijacker tables to implement this.}]
+
+In the presence of @tt{NEXT}, the timing matters. This implementation models
+the delayed behavior needed by real programs: a @tt{COME FROM} attached to a
+saved @tt{NEXT} entry does not fire until that entry is actually resumed.
+
+@subsubsection{TRY AGAIN and GIVE UP}
+
+@tt{GIVE UP} terminates the program. @tt{TRY AGAIN} restarts execution from the
+first runtime line. In practice, @tt{TRY AGAIN} is usually used as an explicit
+loop reset and @tt{GIVE UP} is the normal program exit.
+
+@subsection{Statement state and self-modification}
+
+INTERCAL has line-level control over whether a statement is currently active.
+This is one of the main reasons the implementation generates explicit runtime
+tables instead of compiling directly to straight-line Racket.
+
+@subsubsection{ABSTAIN and REINSTATE}
+
+@tt{ABSTAIN} disables statements; @tt{REINSTATE} re-enables them.
+
+This implementation supports both styles:
+
+@itemlist[
+ @item{targeting a particular labeled line, as in
+       @tt{DO ABSTAIN FROM (100)}, and}
+ @item{targeting gerunds, as in
+       @tt{DO ABSTAIN FROM STASHING + RETRIEVING}.}]
+
+The runtime represents abstention with counts, not booleans. That matters
+because multiple abstentions compose:
+
+@itemlist[
+ @item{abstaining twice increments the count twice,}
+ @item{the line stays inactive while the count is positive, and}
+ @item{each reinstatement removes one layer.}]
+
+@subsubsection{NOT, DON'T, ONCE, and AGAIN}
+
+The parser accepts both @tt{NOT} and upstream-style @tt{DON'T}. The lexer
+normalizes @tt{DON'T} to @tt{DO NOT}, and the runtime interprets that prefix as
+an initial abstention state for the line.
+
+Postfix @tt{ONCE} and @tt{AGAIN} are local state modifiers on that line:
+
+@itemlist[
+ @item{@tt{ONCE} updates the line's abstention state after it is encountered
+       once,}
+ @item{@tt{AGAIN} updates that local state on later encounters, and}
+ @item{the implementation tracks this with per-line state tables, not with
+       source rewriting.}]
+
+The short version is that these modifiers make a line stateful. A line can
+change whether it will run the next time control reaches it.
+
+@subsubsection{IGNORE and REMEMBER}
+
+@tt{IGNORE} and @tt{REMEMBER} control whether assignments to a variable take
+effect.
+
+@itemlist[
+ @item{If a variable is ignored, writes to it are suppressed.}
+ @item{@tt{REMEMBER} restores normal write behavior.}
+ @item{The compiler only emits ignore-table checks for variables that can
+       actually be ignored, which is one of the conservative optimizations in
+       @filepath{sick.rkt}.}]
+
+@subsubsection{STASH and RETRIEVE}
+
+@tt{STASH} saves variable values on per-variable stacks, and @tt{RETRIEVE}
+restores them. For subscripted array expressions, the implementation stashes
+the array object rather than a single indexed element, which matches the way
+INTERCAL uses these commands operationally.
+
+@subsection{Runtime I/O support}
+
+This implementation supports both standard numeric INTERCAL I/O and the tape
+style used by C-INTERCAL string-oriented programs.
+
+@itemlist[
+ @item{Scalar @tt{WRITE IN} reads spelled numbers such as @tt{ONE TWO THREE}
+       and accepts @tt{OH} for zero.}
+ @item{Scalar @tt{READ OUT} writes Roman numerals.}
+ @item{Array @tt{WRITE IN} and @tt{READ OUT} use the C-INTERCAL tape encoding,
+       which is required for programs such as @filepath{pit/hello.i} and
+       @filepath{pit/unlambda.i}.}]
+
+For a Racket programmer, the practical implication is simple: strings are not
+primitive values in INTERCAL. Real text I/O is done through arrays and the tape
+encoding.
+
+@section{Concrete Grammar}
+
+The parser in @filepath{ick-bnf.rkt} is a brag grammar. The exact file is the
+most authoritative source, but the following excerpt captures the language
+accepted by the frontend after line cleaning and packed-@tt{SUB}
+preprocessing:
+
+@verbatim|{
+program : line+
+
+line : label? stmt
+     | label
+
+label : LPAREN NUMBER RPAREN
+
+stmt : do-prefix* op do-postfix*
+
+do-prefix : PLEASE
+          | DO
+          | NOT
+          | MAYBE
+          | PERCENT NUMBER
+
+do-postfix : ONCE
+           | AGAIN
+
+op : assign
+   | next
+   | comefrom
+   | readout
+   | giveup
+   | tryagain
+   | writein
+   | stash
+   | retrieve
+   | ignore
+   | remember
+   | forget
+   | resume
+   | abstain
+   | reinstate
+   | nothing
+
+assign : var GETS expr
+       | var GETS dim-list
+
+next : target NEXT
+comefrom : COME FROM target
+readout : READ OUT expr
+writein : WRITE IN var
+forget : FORGET expr
+resume : RESUME expr
+giveup : GIVE UP
+tryagain : TRY AGAIN
+
+abstain : ABSTAIN FROM abstain-target
+        | ABSTAIN expr FROM abstain-target
+reinstate : REINSTATE abstain-target
+
+var : DOT ident
+    | STAR ident
+    | COLON ident
+    | SEMICOLON ident
+    | COMMA ident
+    | var SUB sublist
+
+expr : mingle
+mingle : select
+       | mingle MINGLE select
+select : unary
+       | select SELECT unary
+unary : UNARY_AND unary
+      | UNARY_OR unary
+      | UNARY_XOR unary
+      | postfix
+postfix : primary
+        | postfix SUB sublist
+primary : var
+        | NUMBER
+        | MESH NUMBER
+        | SQUOTE expr SQUOTE
+        | DQUOTE expr DQUOTE
+}|
+
+Two practical notes:
+
+@itemlist[
+ @item{The cleaner merges continuation lines before this grammar runs.}
+ @item{Packed subscript syntax from upstream programs is expanded before
+       parsing, so the grammar sees explicit repeated @tt{SUB} structure.}]
+
 @section{What is implemented}
 
 The current implementation covers the main language pipeline and a large amount
