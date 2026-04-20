@@ -42,6 +42,18 @@
    '(sick-program/syslib
      (10 (do (read-out .I))))))
 
+(test-case "read out list"
+  (check-equal?
+   (norm* "(10) DO READ OUT .I + :J + ,1")
+   '(sick-program/syslib
+     (10 (do (read-out .I :J |,1|))))))
+
+(test-case "write in list"
+  (check-equal?
+   (norm* "(10) DO WRITE IN .I + :J")
+   '(sick-program/syslib
+     (10 (do (write-in .I :J))))))
+
 (test-case "next"
   (check-equal?
    (norm* "(10) DO (20) NEXT")

@@ -69,14 +69,14 @@ target : NUMBER
 next : target NEXT
 comefrom : COME FROM target
 
-readout : READ OUT expr
+readout : READ OUT expr-list
 giveup : GIVE UP
 tryagain : TRY AGAIN
 
 abstain-target : target
                | gerund-list
 
-writein : WRITE IN var
+writein : WRITE IN expr-list
 stash : STASH expr-list
 retrieve : RETRIEVE expr-list
 forget : FORGET expr

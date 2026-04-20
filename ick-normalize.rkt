@@ -135,6 +135,15 @@
 
     [_ '()]))
 
+(define (extract-expr-list ast)
+  (match ast
+    [`(expr-list ,e1 "+" ,e2)
+     (append (extract-expr-list e1)
+             (extract-expr-list e2))]
+    [`(expr-list ,e)
+     (list (normalize-expr e))]
+    [_ (list (normalize-expr ast))]))
+
 
 ;; =============================================================================
 ;; STATEMENT NORMALIZER
@@ -154,10 +163,10 @@
      `(come-from ,(normalize-expr tgt))]
 
     [`(op (readout "READ" "OUT" ,expr))
-     `(read-out ,(normalize-expr expr))]
+     `(read-out ,@(extract-expr-list expr))]
 
     [`(op (writein "WRITE" "IN" ,var))
-     `(write-in ,(normalize-expr var))]
+     `(write-in ,@(extract-expr-list var))]
 
     [`(op (ignore "IGNORE" ,var))
      `(ignore ,(normalize-expr var))]

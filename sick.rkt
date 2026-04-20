@@ -1653,55 +1653,61 @@
                  #`(begin
                      #,@(map (lambda (v) #`(set! #,(ignore-cell-id (syntax-e v)) #f))
                              (syntax->list #'(var ...))))]
-                [((~datum write-in) var)
-                 (let* ([target-datum (syntax->datum #'var)]
-                        [var-str (and (symbol? target-datum) (symbol->string target-datum))]
-                        [ignore-id (and var-str (ignore-cell-id target-datum))]
-                        [ignored-expr (if ignore-id
-                                          ignore-id
-                                          #`#f)])
-                   (define-values (base idxs) (extract-sub-target target-datum))
-                   (cond
-                     [base
-                      (define base-stx (datum->syntax stx base))
-                      (define idx-stxs (map (lambda (idx) (datum->syntax stx idx)) idxs))
-                      (define base-ignore-id (ignore-cell-id base))
-                      (if base-ignore-id
-                          #`(let ([input-val (read-number-input!)])
-                              (unless #,base-ignore-id
+                [((~datum write-in) var ...)
+                 (define write-stxs
+                   (for/list ([target-stx (in-list (syntax->list #'(var ...)))])
+                     (define target-datum (syntax->datum target-stx))
+                     (define var-str (and (symbol? target-datum) (symbol->string target-datum)))
+                     (define ignore-id (and var-str (ignore-cell-id target-datum)))
+                     (define ignored-expr (or ignore-id #`#f))
+                     (define-values (base idxs) (extract-sub-target target-datum))
+                     (cond
+                       [base
+                        (define base-stx (datum->syntax stx base))
+                        (define idx-stxs
+                          (map (lambda (idx) (datum->syntax stx idx)) idxs))
+                        (define base-ignore-id (ignore-cell-id base))
+                        (if base-ignore-id
+                            #`(let ([input-val (read-number-input!)])
+                                (unless #,base-ignore-id
+                                  (intercal-array-set!* #,base-stx
+                                                        (list #,@idx-stxs)
+                                                        (checked-element-store-value '#,base input-val))))
+                            #`(let ([input-val (read-number-input!)])
                                 (intercal-array-set!* #,base-stx
                                                       (list #,@idx-stxs)
-                                                      (checked-element-store-value '#,base input-val))))
-                          #`(let ([input-val (read-number-input!)])
-                              (intercal-array-set!* #,base-stx
-                                                    (list #,@idx-stxs)
-                                                    (checked-element-store-value '#,base input-val))))]
-                     [(and var-str
-                           (or (string-prefix? var-str "*")
-                               (string-prefix? var-str ",")
-                               (string-prefix? var-str ";")))
-                      (if ignore-id
-                          #`(read-array-input! var #,ignore-id)
-                          #'(read-array-input! var #f))]
-                     [else
-                      #`(let ([input-val (read-number-input!)])
-                          (unless #,ignored-expr
-                            (set! var (checked-store-value '#,target-datum input-val))))]))]
-                [((~datum read-out) var)
-                 #`(let ([v var])
-                     (trace! 'read-out
-                             (format "pc=~a value=~a" #,current-ln v)
-                             #:line #,current-ln)
-                     (cond
-                       [(or (vector? v) (intercal-array? v))
-                        (write-array-output! v)
-                        (set! output-acc (append (reverse (array-output-list v)) output-acc))]
+                                                      (checked-element-store-value '#,base input-val))))]
+                       [(and var-str
+                             (or (string-prefix? var-str "*")
+                                 (string-prefix? var-str ",")
+                                 (string-prefix? var-str ";")))
+                        (if ignore-id
+                            #`(read-array-input! #,target-stx #,ignore-id)
+                            #`(read-array-input! #,target-stx #f))]
                        [else
-                        (displayln
-                         (cond ((and (number? v) (zero? v)) "_")
-                               ((number? v) (string-upcase (number->roman v)))
-                               (else "")))
-                        (set! output-acc (cons v output-acc))]))]
+                        #`(let ([input-val (read-number-input!)])
+                            (unless #,ignored-expr
+                              (set! #,target-stx
+                                    (checked-store-value '#,target-datum input-val))))])))
+                 #`(begin #,@write-stxs)]
+                [((~datum read-out) var ...)
+                 (define read-stxs
+                   (for/list ([target-stx (in-list (syntax->list #'(var ...)))])
+                     #`(let ([v #,target-stx])
+                         (trace! 'read-out
+                                 (format "pc=~a value=~a" #,current-ln v)
+                                 #:line #,current-ln)
+                         (cond
+                           [(or (vector? v) (intercal-array? v))
+                            (write-array-output! v)
+                            (set! output-acc (append (reverse (array-output-list v)) output-acc))]
+                           [else
+                            (displayln
+                             (cond ((and (number? v) (zero? v)) "_")
+                                   ((number? v) (string-upcase (number->roman v)))
+                                   (else "")))
+                            (set! output-acc (cons v output-acc))]))))
+                 #`(begin #,@read-stxs)]
 
                 [((~datum abstain) (~optional (~datum from)) target)
                  (let ([t (eval-label-target #'target)])

@@ -829,6 +829,20 @@
  "Write In from STDIN")
 
 (check-equal?
+ (call-with-values
+  (thunk
+   (with-input-from-string "ONE\nTWO\n"
+     (thunk
+      (sick-program
+       (do (write-in .I :J))
+       (do (read-out .I))
+       (do (read-out :J))
+       (please (give-up))))))
+  list)
+ (list 1 2)
+ "WRITE IN list reads each target in order")
+
+(check-equal?
  (with-output-to-string
    (thunk
     (sick-program
@@ -850,6 +864,42 @@
      (please (give-up)))))
  "hello, world\n"
  "Array READ OUT uses C-INTERCAL tape output")
+
+(check-equal?
+ (with-output-to-string
+   (thunk
+    (sick-program
+     (do (assign *I (mesh 'VI)))
+     (do (assign (sub *I (mesh 'I)) (mesh 234)))
+     (do (assign (sub *I (mesh 'II)) (mesh 112)))
+     (do (assign (sub *I (mesh 'III)) (mesh 112)))
+     (do (assign (sub *I (mesh 'IV)) (mesh 0)))
+     (do (assign (sub *I (mesh 'V)) (mesh 64)))
+     (do (assign (sub *I (mesh 'VI)) (mesh 194)))
+     (do (assign *J (mesh 'VII)))
+     (do (assign (sub *J (mesh 'I)) (mesh 48)))
+     (do (assign (sub *J (mesh 'II)) (mesh 22)))
+     (do (assign (sub *J (mesh 'III)) (mesh 248)))
+     (do (assign (sub *J (mesh 'IV)) (mesh 168)))
+     (do (assign (sub *J (mesh 'V)) (mesh 24)))
+     (do (assign (sub *J (mesh 'VI)) (mesh 16)))
+     (do (assign (sub *J (mesh 'VII)) (mesh 214)))
+     (do (read-out *I *J))
+     (please (give-up)))))
+ "hello, world\n"
+ "READ OUT list preserves tape state across array segments")
+
+(check-equal?
+ (call-with-values
+  (thunk
+   (sick-program
+    (do (assign .I (mesh 'I)))
+    (do (assign :J (mesh 'II)))
+    (do (read-out .I :J))
+    (please (give-up))))
+  list)
+ (list 1 2)
+ "READ OUT list emits all scalar items in order")
 
 
 
