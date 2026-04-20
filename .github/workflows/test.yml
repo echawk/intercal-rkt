@@ -50,6 +50,9 @@ jobs:
       - name: Run package language tests
         run: raco test tests/package-lang-test.rkt
 
+      - name: Run profiling tool tests
+        run: raco test tests/profile-intercal-test.rkt
+
       - name: Run pit program tests
         run: raco test tests/pit-programs-test.rkt
 
