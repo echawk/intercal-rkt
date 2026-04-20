@@ -22,13 +22,18 @@ jobs:
         id: cache-racket
         uses: actions/cache@v4
         with:
-          path: ~/.local/share/racket
-          key: ${{ runner.os }}-racket-${{ hashFiles('.github/workflows/*.yml') }}
+          path: |
+            ~/.local/share/racket
+            ~/.cache/racket
+            ~/.racket
+          key: ${{ runner.os }}-racket-pkgs-${{ hashFiles('info.rkt', '.github/workflows/test.yml') }}
+          restore-keys: |
+            ${{ runner.os }}-racket-pkgs-
 
       # Only run raco pkg install if we didn't get a cache hit
       - name: Install racket libraries
         if: steps.cache-racket.outputs.cache-hit != 'true'
-        run: raco pkg install --auto component brag roman-numeral
+        run: raco pkg install --auto --skip-installed component brag roman-numeral
 
       - name: Cache and install C-INTERCAL
         uses: awalsh128/cache-apt-pkgs-action@v1.6.0
@@ -44,6 +49,9 @@ jobs:
 
       - name: Run package language tests
         run: raco test tests/package-lang-test.rkt
+
+      - name: Run pit program tests
+        run: raco test tests/pit-programs-test.rkt
 
       - name: Run fib.i test
         run: |
@@ -101,3 +109,9 @@ jobs:
           ick -b pit/rot13.i && ./pit/rot13 < rot13.in > rot13.out.ick
           racket pit/rot13.i < rot13.in > rot13.out.rkt || true
           diff rot13.out.ick rot13.out.rkt
+
+      - name: Run triangular.i test
+        run: |
+          ick -b pit/triangular.i && ./pit/triangular | awk 'NF' > triangular.out.ick
+          racket pit/triangular.i | awk 'NF' > triangular.out.rkt || true
+          diff triangular.out.ick triangular.out.rkt

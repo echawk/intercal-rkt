@@ -46,8 +46,11 @@ racket pit/hello.i
 
 The repository also includes a number of sample and regression-tested programs,
 including @filepath{pit/fib.i}, @filepath{pit/hanoi.i}, @filepath{pit/hello.i},
-@filepath{pit/beer.i}, @filepath{pit/life.i}, @filepath{pit/rot13.i}, and
-@filepath{pit/unlambda.i}.
+@filepath{pit/beer.i}, @filepath{pit/life.i}, @filepath{pit/rot13.i},
+@filepath{pit/triangular.i}, and @filepath{pit/unlambda.i}.
+
+For a worked example aimed at writing new programs, see
+@filepath{scribblings/programming-intercal.scrbl}.
 
 @section{What is implemented}
 
