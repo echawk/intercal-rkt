@@ -314,6 +314,25 @@
     <)
    '(100 200)))
 
+(test-case "non-hijackable fallthrough does not call get-actual-next"
+  (define expanded-source
+    (expanded-sick-module-source
+     #'(sick-program
+        (10 (do (assign .X (mesh 'I))))
+        (20 (do (read-out .X)))
+        (30 (please (give-up))))))
+  (check-false (string-contains? expanded-source "get-actual-next '10 '2"))
+  (check-false (string-contains? expanded-source "get-actual-next '20 '3")))
+
+(test-case "FORGET on a non-hijackable line falls through directly"
+  (define expanded-source
+    (expanded-sick-module-source
+     #'(sick-program
+        (10 (do (assign .ONE (mesh 'I))))
+        (20 (do (forget .ONE)))
+        (30 (please (give-up))))))
+  (check-false (string-contains? expanded-source "get-actual-next '_ '3")))
+
 (test-case "abstain optimizer removes guard code from non-abstainable lines"
   (define no-abstain-source
     (expanded-sick-module-source

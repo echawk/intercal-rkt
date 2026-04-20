@@ -1719,8 +1719,8 @@
                               [drop-count (max 0 (min count (length next-stack)))])
                          (trace! 'forget (format "pc=~a count=~a effective=~a stack-before=~a" #,current-ln count drop-count (next-stack->debug)) #:line #,current-ln)
                          (set! next-stack (drop next-stack drop-count))
-                         (loop (get-actual-next '#,lbl-val '#,next-ln-val)))]
-                    [_ #`(loop (get-actual-next '#,lbl-val '#,next-ln-val))]))
+                         #,default-next-stx)]
+                    [_ default-next-stx]))
                 (define execute-stx
                   (cond
                     [(>= pct-val 100)
