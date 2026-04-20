@@ -884,6 +884,14 @@
     [(32) #xffffffff]
     [else (sub1 (arithmetic-shift 1 width))]))
 
+(define-for-syntax (low-bit-mask? n)
+  (and (exact-nonnegative-integer? n)
+       (zero? (bitwise-and n (add1 n)))))
+
+(define-for-syntax (power-of-two? n)
+  (and (exact-positive-integer? n)
+       (zero? (bitwise-and n (sub1 n)))))
+
 (define-for-syntax (ct-spread-mingle-16 n)
   (for/fold ([result 0])
             ([bit (in-range 16)])
@@ -1009,6 +1017,8 @@
 
 (define-for-syntax (expr-width datum)
   (match datum
+    [`(mesh ,(? exact-integer? n))
+     (if (> n onespot-limit/stx) 32 16)]
     [`(mesh ,_) 16]
     [`(mingle ,_ ,_) 32]
     [`(mingle-16 ,_ ,_) 32]
@@ -1030,37 +1040,72 @@
     [(? symbol? sym) (symbol-width sym)]
     [_ 16]))
 
+(define-for-syntax (maybe-fold-const datum)
+  (define const-val (const-expr-value datum))
+  (and (exact-integer? const-val)
+       `(mesh ,const-val)))
+
+(define-for-syntax (booleanize-expr datum width)
+  `(if (zero? (bitwise-and ,datum ,(ct-width-mask width))) 0 1))
+
+(define-for-syntax (simplify-width-aware-op datum)
+  (or (maybe-fold-const datum)
+      (match datum
+        [`(select-16 (mesh 0) ,_) `(mesh 0)]
+        [`(select-32 (mesh 0) ,_) `(mesh 0)]
+        [`(select-16 ,_ (mesh 0)) `(mesh 0)]
+        [`(select-32 ,_ (mesh 0)) `(mesh 0)]
+        [`(select-16 (select-16 ,lhs ,rhs) (mesh 1))
+         #:when (equal? lhs rhs)
+         (booleanize-expr lhs 16)]
+        [`(select-32 (select-32 ,lhs ,rhs) (mesh 1))
+         #:when (equal? lhs rhs)
+         (booleanize-expr lhs 32)]
+        [`(select-16 ,lhs (mesh ,(? exact-nonnegative-integer? mask)))
+         (cond
+           [(low-bit-mask? mask) `(bitwise-and ,lhs ,mask)]
+           [(power-of-two? mask) `(if (zero? (bitwise-and ,lhs ,mask)) 0 1)]
+           [else datum])]
+        [`(select-32 ,lhs (mesh ,(? exact-nonnegative-integer? mask)))
+         (cond
+           [(low-bit-mask? mask) `(bitwise-and ,lhs ,mask)]
+           [(power-of-two? mask) `(if (zero? (bitwise-and ,lhs ,mask)) 0 1)]
+           [else datum])]
+        [_ datum])))
+
 (define-for-syntax (rewrite-width-aware-ops datum)
-  (match datum
-    [`(mingle ,lhs ,rhs)
-     `(mingle-16
-       ,(rewrite-width-aware-ops lhs)
-       ,(rewrite-width-aware-ops rhs))]
-    [`(select ,lhs ,rhs)
-     (define rewritten-lhs (rewrite-width-aware-ops lhs))
-     (define rewritten-rhs (rewrite-width-aware-ops rhs))
-     (define width (expr-width `(select ,rewritten-lhs ,rewritten-rhs)))
-     `(,(if (= width 32) 'select-32 'select-16)
-       ,rewritten-lhs
-       ,rewritten-rhs)]
-    [`(unary-and ,rhs)
-     (define rewritten-rhs (rewrite-width-aware-ops rhs))
-     `(,(if (= (expr-width rewritten-rhs) 32) 'unary-and-32 'unary-and-16)
-       ,rewritten-rhs)]
-    [`(unary-or ,rhs)
-     (define rewritten-rhs (rewrite-width-aware-ops rhs))
-     `(,(if (= (expr-width rewritten-rhs) 32) 'unary-or-32 'unary-or-16)
-       ,rewritten-rhs)]
-    [`(unary-xor ,rhs)
-     (define rewritten-rhs (rewrite-width-aware-ops rhs))
-     `(,(if (= (expr-width rewritten-rhs) 32) 'unary-xor-32 'unary-xor-16)
-       ,rewritten-rhs)]
-    [`(sub ,base ,idxs ...)
-     `(sub ,(rewrite-width-aware-ops base)
-           ,@(map rewrite-width-aware-ops idxs))]
-    [(list elems ...)
-     (map rewrite-width-aware-ops elems)]
-    [_ datum]))
+  (define rewritten
+    (match datum
+      [`(mingle ,lhs ,rhs)
+       `(mingle-16
+         ,(rewrite-width-aware-ops lhs)
+         ,(rewrite-width-aware-ops rhs))]
+      [`(select ,lhs ,rhs)
+       (define rewritten-lhs (rewrite-width-aware-ops lhs))
+       (define rewritten-rhs (rewrite-width-aware-ops rhs))
+       (define width (expr-width `(select ,rewritten-lhs ,rewritten-rhs)))
+       `(,(if (= width 32) 'select-32 'select-16)
+         ,rewritten-lhs
+         ,rewritten-rhs)]
+      [`(unary-and ,rhs)
+       (define rewritten-rhs (rewrite-width-aware-ops rhs))
+       `(,(if (= (expr-width rewritten-rhs) 32) 'unary-and-32 'unary-and-16)
+         ,rewritten-rhs)]
+      [`(unary-or ,rhs)
+       (define rewritten-rhs (rewrite-width-aware-ops rhs))
+       `(,(if (= (expr-width rewritten-rhs) 32) 'unary-or-32 'unary-or-16)
+         ,rewritten-rhs)]
+      [`(unary-xor ,rhs)
+       (define rewritten-rhs (rewrite-width-aware-ops rhs))
+       `(,(if (= (expr-width rewritten-rhs) 32) 'unary-xor-32 'unary-xor-16)
+         ,rewritten-rhs)]
+      [`(sub ,base ,idxs ...)
+       `(sub ,(rewrite-width-aware-ops base)
+             ,@(map rewrite-width-aware-ops idxs))]
+      [(list elems ...)
+       (map rewrite-width-aware-ops elems)]
+      [_ datum]))
+  (simplify-width-aware-op rewritten))
 
 (define-for-syntax (flatten-sub-stx stx)
   (datum->syntax stx

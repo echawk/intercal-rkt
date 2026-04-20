@@ -176,6 +176,49 @@
         (40 (please (give-up))))))
   (check-true (regexp-match? #rx"select-32" expanded-source)))
 
+(test-case "compile-time folding removes constant INTERCAL bit operators"
+  (define expanded-source
+    (expanded-sick-module-source
+     #'(sick-program
+        (10 (do (assign .X
+                        (select
+                         (mingle (mesh 3) (mesh 5))
+                         (unary-xor (mesh 7)))))
+        )
+        (20 (do (read-out .X)))
+        (30 (please (give-up))))))
+  (check-false (regexp-match? #rx"mingle-16|select-16|select-32|unary-(and|or|xor)-(16|32)"
+                              expanded-source)))
+
+(test-case "SELECT with low-bit mask rewrites to bitwise-and"
+  (define expanded-source
+    (expanded-sick-module-source
+     #'(sick-program
+        (10 (do (assign .X (select .Y (mesh 7)))))
+        (20 (please (give-up))))))
+  (check-true (regexp-match? #rx"bitwise-and" expanded-source))
+  (check-false (regexp-match? #rx"select-16|select-32" expanded-source)))
+
+(test-case "SELECT with single-bit mask rewrites to a booleanized bit test"
+  (define expanded-source
+    (expanded-sick-module-source
+     #'(sick-program
+        (10 (do (assign .X (select .Y (mesh 8)))))
+        (20 (please (give-up))))))
+  (check-true (regexp-match? #rx"zero\\?" expanded-source))
+  (check-true (regexp-match? #rx"bitwise-and" expanded-source))
+  (check-false (regexp-match? #rx"select-16|select-32" expanded-source)))
+
+(test-case "SELECT-SELF then SELECT #1 rewrites to a width-aware nonzero test"
+  (define expanded-source
+    (expanded-sick-module-source
+     #'(sick-program
+        (10 (do (assign .X (select (select .Y .Y) (mesh 1)))))
+        (20 (please (give-up))))))
+  (check-true (regexp-match? #rx"65535" expanded-source))
+  (check-true (regexp-match? #rx"zero\\?" expanded-source))
+  (check-false (regexp-match? #rx"select-16|select-32" expanded-source)))
+
 (test-case "unlambda allocator SELECT expression keeps twospot width"
   (check-equal?
    (call-with-values
