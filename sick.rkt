@@ -1275,6 +1275,10 @@
       (match line [`(,ln ,_ ,_ ,_ ,_ ,_ ,_ ,_) ln])))))
 
 
+;; FIXME: need to make gerund & other things which can be abstained, to use their
+;; own specific variable, and check if the variable itself was mutated. This is
+;; a built in feature of racket's optimizer, and it will remove many of those
+;; useless function calls.
 (define-syntax (sick-program-core stx)
   (syntax-parse stx
     ;; Accept the new normalized tuple format!
@@ -1402,7 +1406,7 @@
 
             (define compiled-op
               (syntax-parse current-op
-                 [((~datum assign) var ((~datum dimension) dim ...))
+                [((~datum assign) var ((~datum dimension) dim ...))
                  (let ([var-str (symbol->string (syntax-e #'var))])
                    (define needs-ignore-guard?
                      (member (syntax-e #'var) ignore-guard-vars))
@@ -1543,9 +1547,9 @@
                            (or (string-prefix? var-str "*")
                                (string-prefix? var-str ",")
                                (string-prefix? var-str ";")))
-                     (if (member target-datum ignore-guard-vars)
-                         #'(read-array-input! var (hash-ref ignore-tbl (quote var) #f))
-                         #'(read-array-input! var #f))]
+                      (if (member target-datum ignore-guard-vars)
+                          #'(read-array-input! var (hash-ref ignore-tbl (quote var) #f))
+                          #'(read-array-input! var #f))]
                      [else
                       #`(let ([input-val (read-number-input!)])
                           (unless #,ignored-expr
@@ -1697,7 +1701,7 @@
                                #,natural-next-stx)
                              #,execute-stx)))
                     #`((#,current-ln) #,execute-stx)))
-                )
+              )
 
             (cons branch (loop (cdr lns) (cdr lbls) (cdr pcts) (cdr is-onces) (cdr is-agains) (cdr operations)))])))
 
@@ -1777,7 +1781,7 @@
              (when (> step-count max-steps)
                (parameterize ([current-output-port (current-error-port)])
                  (fprintf (current-output-port)
-                         "[sick limit] max-steps=~a reached at pc=~a label=~a op=~s stack=~a\n"
+                          "[sick limit] max-steps=~a reached at pc=~a label=~a op=~s stack=~a\n"
                           max-steps
                           pc
                           (hash-ref rt-ln->lbl-map pc '_)
@@ -1992,11 +1996,11 @@
               (define (fetch-field i j k)
                 (with-handlers ([exn:fail? (lambda (_) '<invalid>)])
                   (intercal-array-ref* maybe-node-store (list i j k))))
-               (define (walk root-name i j depth)
-                 (define key (list i j))
-                 (cond
-                   [(hash-ref seen key #f)
-                    (emit! "[sick node] root=~a depth=~a node=~s cycle"
+              (define (walk root-name i j depth)
+                (define key (list i j))
+                (cond
+                  [(hash-ref seen key #f)
+                   (emit! "[sick node] root=~a depth=~a node=~s cycle"
                           root-name depth key)]
                   [else
                    (hash-set! seen key #t)
@@ -2013,12 +2017,12 @@
                         (when (and (integer? cdr-i) (integer? cdr-j))
                           (walk root-name cdr-i cdr-j (add1 depth)))]
                        [_ (void)]))]))
-               (for ([spec (in-list debug-node-roots)])
-                 (define idxs (map resolve-debug-sub-part spec))
-                 (when (and (= (length idxs) 2)
-                            (andmap integer? idxs))
-                   (walk idxs (car idxs) (cadr idxs) 0)))
-               (reverse lines)]))
+              (for ([spec (in-list debug-node-roots)])
+                (define idxs (map resolve-debug-sub-part spec))
+                (when (and (= (length idxs) 2)
+                           (andmap integer? idxs))
+                  (walk idxs (car idxs) (cadr idxs) 0)))
+              (reverse lines)]))
 
          (define (get-ln-for-lbl target-lbl)
            (hash-ref lbl->ln-map
@@ -2086,7 +2090,7 @@
                        (repeated-state-break? pc))
                (parameterize ([current-output-port (current-error-port)])
                  (fprintf (current-output-port)
-                         "[sick breakpoint] pc=~a label=~a op=~s stack=~a\n"
+                          "[sick breakpoint] pc=~a label=~a op=~s stack=~a\n"
                           pc
                           (hash-ref rt-ln->lbl-map pc '_)
                           (hash-ref ln->op-map pc #f)
@@ -2096,13 +2100,13 @@
                      (fprintf (current-output-port)
                               "[sick breakpoint] var=~a value=~s stash-depth=~a\n"
                               sym val depth))))
-                 (for ([entry (in-list (debug-sub-snapshots))])
-                   (match-let ([(list base idxs val) entry])
-                     (fprintf (current-output-port)
-                              "[sick breakpoint] sub=~a idxs=~s value=~s\n"
-                              base idxs val)))
-                 (for ([line (in-list (debug-node-dump-lines))])
-                   (fprintf (current-output-port) "~a\n" line))
+               (for ([entry (in-list (debug-sub-snapshots))])
+                 (match-let ([(list base idxs val) entry])
+                   (fprintf (current-output-port)
+                            "[sick breakpoint] sub=~a idxs=~s value=~s\n"
+                            base idxs val)))
+               (for ([line (in-list (debug-node-dump-lines))])
+                 (fprintf (current-output-port) "~a\n" line))
                (dump-recent-trace!)
                (error (format "SICK breakpoint at line ~a" pc)))
              (trace! 'pc
