@@ -347,9 +347,10 @@
         (20 (do (abstain 10)))
         (30 (please (give-up))))))
   (check-false (regexp-match? #rx"is-abstained\\?" no-abstain-source))
-  (check-true (regexp-match? #rx"is-abstained\\?" with-abstain-source)))
+  (check-true (regexp-match? #rx"is-abstained\\?" with-abstain-source))
+  (check-false (regexp-match? #rx"hash-ref abstain-tbl|hash-set! abstain-tbl" with-abstain-source)))
 
-(test-case "ignore optimizer removes table lookups for non-ignorable variables"
+(test-case "ignore optimizer removes dynamic table lookups"
   (define no-ignore-source
     (expanded-sick-module-source
      #'(sick-program
@@ -365,8 +366,8 @@
         (30 (do (write-in .X)))
         (40 (do (retrieve .X)))
         (50 (please (give-up))))))
-  (check-false (regexp-match? #rx"hash-ref ignore-tbl" no-ignore-source))
-  (check-true (regexp-match? #rx"hash-ref ignore-tbl" with-ignore-source)))
+  (check-false (regexp-match? #rx"hash-ref ignore-tbl|hash-set! ignore-tbl" no-ignore-source))
+  (check-false (regexp-match? #rx"hash-ref ignore-tbl|hash-set! ignore-tbl" with-ignore-source)))
 
 ;; FIXME: fix test
 ;; (check-equal?

@@ -884,6 +884,22 @@
     [(32) #xffffffff]
     [else (sub1 (arithmetic-shift 1 width))]))
 
+(define-for-syntax (safe-id-suffix datum)
+  (define raw
+    (cond
+      [(symbol? datum) (symbol->string datum)]
+      [else (format "~a" datum)]))
+  (define (encode ch)
+    (cond
+      [(or (char-alphabetic? ch) (char-numeric? ch)) (string ch)]
+      [else (format "_~x_" (char->integer ch))]))
+  (apply string-append (map encode (string->list raw))))
+
+(define-for-syntax (make-state-id prefix datum ctx)
+  (datum->syntax ctx
+                 (string->symbol
+                  (format "~a_~a" prefix (safe-id-suffix datum)))))
+
 (define-for-syntax (low-bit-mask? n)
   (and (exact-nonnegative-integer? n)
        (zero? (bitwise-and n (add1 n)))))
@@ -1401,6 +1417,30 @@
      (define come-from-guard-labels
        (compute-come-from-guard-labels/stx normalized-lines))
 
+     (define line-state-meta
+       (for/hash ([l-ln (in-list (syntax->list #'(ln ...)))]
+                  [l-is-not (in-list (syntax->list #'(is-not ...)))]
+                  [l-is-once (in-list (syntax->list #'(is-once ...)))]
+                  [l-is-again (in-list (syntax->list #'(is-again ...)))])
+         (values (syntax-e l-ln)
+                 (list (syntax-e l-is-not)
+                       (syntax-e l-is-once)
+                       (syntax-e l-is-again)))))
+
+     (define abstain-cell-map
+       (for/hash ([ln (in-list abstain-guard-lines)])
+         (values ln (make-state-id "abstain_count" ln stx))))
+
+     (define ignore-cell-map
+       (for/hash ([v (in-list ignore-guard-vars)])
+         (values v (make-state-id "ignored" v stx))))
+
+     (define (abstain-cell-id ln)
+       (hash-ref abstain-cell-map ln #f))
+
+     (define (ignore-cell-id sym)
+       (hash-ref ignore-cell-map sym #f))
+
      (define first-ln (syntax-e (car (syntax->list #'(ln ...)))))
 
      (define ln->lbl-map
@@ -1412,6 +1452,17 @@
                    (syntax->list #'(ln ...))
                    (syntax->list #'(lbl ...)))
          h))
+
+     (define label->ln-clauses
+       (for/list ([l-ln (in-list (syntax->list #'(ln ...)))]
+                  [l-lbl (in-list (syntax->list #'(lbl ...)))]
+                  #:unless (eq? (syntax-e l-lbl) '_))
+         #`[(#,(syntax-e l-lbl)) #,(syntax-e l-ln)]))
+
+     (define come-from-clauses
+       (for/list ([entry (in-list grouped-come-froms)])
+         (match entry
+           [(cons lbl lns) #`[(#,lbl) '#,lns]])))
 
      (define ln->op-map
        (let ([h (make-hash)])
@@ -1433,6 +1484,29 @@
                   #`(begin (define #,vid #f) (define #,vstack '()))
                   #`(begin (define #,vid 0)  (define #,vstack '()))))
             all-vars))
+
+     (define ignore-state-definitions
+       (for/list ([v (in-list ignore-guard-vars)])
+         #`(define #,(ignore-cell-id v) #f)))
+
+     (define abstain-state-definitions
+       (for/list ([ln (in-list abstain-guard-lines)])
+         (define initial-not?
+           (match (hash-ref line-state-meta ln)
+             [(list is-not _ _) is-not]))
+         #`(define #,(abstain-cell-id ln) #,(if initial-not? 1 0))))
+
+     (define update-state-clauses
+       (for/list ([ln (in-list abstain-guard-lines)]
+                  #:when (match (hash-ref line-state-meta ln)
+                           [(list _ is-once is-again) (or is-once is-again)]))
+         (match-define (list is-not is-once is-again) (hash-ref line-state-meta ln))
+         (define next-count
+           (cond
+             [is-once (if is-not 0 1)]
+             [is-again (if is-not 1 0)]
+             [else 0]))
+         #`[(#,ln) (set! #,(abstain-cell-id ln) #,next-count)]))
 
      (define case-clauses
        (let loop ([lns (syntax->list #'(ln ...))]
@@ -1462,17 +1536,16 @@
               (syntax-parse current-op
                 [((~datum assign) var ((~datum dimension) dim ...))
                  (let ([var-str (symbol->string (syntax-e #'var))])
-                   (define needs-ignore-guard?
-                     (member (syntax-e #'var) ignore-guard-vars))
+                   (define ignore-id (ignore-cell-id (syntax-e #'var)))
                    (if (or (string-prefix? var-str "*")
                            (string-prefix? var-str ",")
                            (string-prefix? var-str ";"))
-                       (if needs-ignore-guard?
-                           #'(unless (hash-ref ignore-tbl (quote var) #f)
+                       (if ignore-id
+                           #`(unless #,ignore-id
                                (set! var (make-intercal-array (list dim ...))))
                            #'(set! var (make-intercal-array (list dim ...))))
-                       (if needs-ignore-guard?
-                           #'(unless (hash-ref ignore-tbl (quote var) #f)
+                       (if ignore-id
+                           #`(unless #,ignore-id
                                (set! var (list dim ...)))
                            #'(set! var (list dim ...)))))]
                 [((~datum assign) var val)
@@ -1483,8 +1556,9 @@
                      [base
                       (define base-stx (datum->syntax stx base))
                       (define idx-stxs (map (lambda (idx) (datum->syntax stx idx)) idxs))
-                      (if (member base ignore-guard-vars)
-                          #`(unless (hash-ref ignore-tbl (quote #,base-stx) #f)
+                      (define ignore-id (ignore-cell-id base))
+                      (if ignore-id
+                          #`(unless #,ignore-id
                               (trace! 'assign
                                       (format "pc=~a target=~a idxs=~a value=~a" #,current-ln '#,base (list #,@idx-stxs) val)
                                       #:line #,current-ln
@@ -1504,8 +1578,9 @@
                            (or (string-prefix? var-str "*")
                                (string-prefix? var-str ",")
                                (string-prefix? var-str ";")))
-                      (if (member target-datum ignore-guard-vars)
-                          #`(unless (hash-ref ignore-tbl (quote var) #f)
+                      (define ignore-id (ignore-cell-id target-datum))
+                      (if ignore-id
+                          #`(unless #,ignore-id
                               (trace! 'assign
                                       (format "pc=~a target=~a value=~a" #,current-ln 'var val)
                                       #:line #,current-ln
@@ -1518,8 +1593,9 @@
                                       #:var 'var)
                               (set! var (make-intercal-array (list val)))))]
                      [else
-                      (if (member target-datum ignore-guard-vars)
-                          #`(unless (hash-ref ignore-tbl (quote var) #f)
+                      (define ignore-id (ignore-cell-id target-datum))
+                      (if ignore-id
+                          #`(unless #,ignore-id
                               (trace! 'assign
                                       (format "pc=~a target=~a value=~a" #,current-ln '#,target-datum val)
                                       #:line #,current-ln
@@ -1547,10 +1623,11 @@
                    (map (lambda (v)
                           (let ([vstack (datum->syntax stx (string->symbol (string-append (symbol->string (syntax-e v)) "-stack")))])
                             (define store-stx
-                              (if (member (syntax-e v) ignore-guard-vars)
-                                  #`(unless (hash-ref ignore-tbl (quote #,v) #f)
+                              (let ([ignore-id (ignore-cell-id (syntax-e v))])
+                                (if ignore-id
+                                  #`(unless #,ignore-id
                                       (set! #,v (checked-store-value '#,(syntax-e v) retrieved-val)))
-                                  #`(set! #,v (checked-store-value '#,(syntax-e v) retrieved-val))))
+                                  #`(set! #,v (checked-store-value '#,(syntax-e v) retrieved-val)))))
                             #`(begin
                                 (when (null? #,vstack)
                                   (trace! 'retrieve-error
@@ -1569,27 +1646,29 @@
                  #`(begin #,@retrieve-stxs)]
                 [((~datum ignore) var ...)
                  #`(begin
-                     #,@(map (lambda (v) #`(hash-set! ignore-tbl (quote #,v) #t))
+                     #,@(map (lambda (v) #`(set! #,(ignore-cell-id (syntax-e v)) #t))
                              (syntax->list #'(var ...))))]
 
                 [((~datum remember) var ...)
                  #`(begin
-                     #,@(map (lambda (v) #`(hash-set! ignore-tbl (quote #,v) #f))
+                     #,@(map (lambda (v) #`(set! #,(ignore-cell-id (syntax-e v)) #f))
                              (syntax->list #'(var ...))))]
                 [((~datum write-in) var)
                  (let* ([target-datum (syntax->datum #'var)]
                         [var-str (and (symbol? target-datum) (symbol->string target-datum))]
-                        [ignored-expr (if (and var-str (member target-datum ignore-guard-vars))
-                                          #`(hash-ref ignore-tbl (quote var) #f)
+                        [ignore-id (and var-str (ignore-cell-id target-datum))]
+                        [ignored-expr (if ignore-id
+                                          ignore-id
                                           #`#f)])
                    (define-values (base idxs) (extract-sub-target target-datum))
                    (cond
                      [base
                       (define base-stx (datum->syntax stx base))
                       (define idx-stxs (map (lambda (idx) (datum->syntax stx idx)) idxs))
-                      (if (member base ignore-guard-vars)
+                      (define base-ignore-id (ignore-cell-id base))
+                      (if base-ignore-id
                           #`(let ([input-val (read-number-input!)])
-                              (unless (hash-ref ignore-tbl (quote #,base-stx) #f)
+                              (unless #,base-ignore-id
                                 (intercal-array-set!* #,base-stx
                                                       (list #,@idx-stxs)
                                                       (checked-element-store-value '#,base input-val))))
@@ -1601,8 +1680,8 @@
                            (or (string-prefix? var-str "*")
                                (string-prefix? var-str ",")
                                (string-prefix? var-str ";")))
-                      (if (member target-datum ignore-guard-vars)
-                          #'(read-array-input! var (hash-ref ignore-tbl (quote var) #f))
+                      (if ignore-id
+                          #`(read-array-input! var #,ignore-id)
                           #'(read-array-input! var #f))]
                      [else
                       #`(let ([input-val (read-number-input!)])
@@ -1631,14 +1710,29 @@
                  (let ([t (eval-label-target #'target)])
                    #`(abstain-line-count! (get-abstain-ln-for-lbl '#,t) count))]
                 [((~datum abstain-gerunds-once) gerund ...)
-                 #`(abstain-gerunds-once! '(gerund ...))]
+                 (define target-lns
+                   (remove-duplicates
+                    (apply append
+                           (for/list ([g (in-list (syntax->datum #'(gerund ...)))])
+                             (hash-ref gerund->lns-map g '())))))
+                 #`(begin #,@(map (lambda (ln) #`(abstain-line-once! #,ln)) target-lns))]
                 [((~datum abstain-gerunds) count gerund ...)
-                 #`(abstain-gerunds! count '(gerund ...))]
+                 (define target-lns
+                   (remove-duplicates
+                    (apply append
+                           (for/list ([g (in-list (syntax->datum #'(gerund ...)))])
+                             (hash-ref gerund->lns-map g '())))))
+                 #`(begin #,@(map (lambda (ln) #`(abstain-line-count! #,ln count)) target-lns))]
                 [((~datum reinstate) target)
                  (let ([t (eval-label-target #'target)])
                    #`(reinstate-line-once! (get-abstain-ln-for-lbl '#,t)))]
                 [((~datum reinstate-gerunds) gerund ...)
-                 #`(reinstate-gerunds! '(gerund ...))]
+                 (define target-lns
+                   (remove-duplicates
+                    (apply append
+                           (for/list ([g (in-list (syntax->datum #'(gerund ...)))])
+                             (hash-ref gerund->lns-map g '())))))
+                 #`(begin #,@(map (lambda (ln) #`(reinstate-line-once! #,ln)) target-lns))]
 
                 [((~datum nothing)) #`(void)]
                 [(~datum nothing)   #`(void)]
@@ -1744,8 +1838,9 @@
                                #,natural-next-stx)))])
                   )
                 (if needs-abstain-guard?
+                    (let ([abstain-id (abstain-cell-id (syntax-e current-ln))])
                     #`((#,current-ln)
-                       (let ([abstain-count (hash-ref abstain-tbl #,current-ln 0)])
+                       (let ([abstain-count #,abstain-id])
                          (define is-abstained? (positive? abstain-count))
                          (if is-abstained?
                              (begin
@@ -1753,7 +1848,7 @@
                                (trace! 'skip (format "pc=~a label=~a abstain-count=~a" #,current-ln '#,lbl-val abstain-count) #:line #,current-ln)
                                #,(if (or is-once-val is-again-val) #`(update-state! #,current-ln) #`(void))
                                #,natural-next-stx)
-                             #,execute-stx)))
+                             #,execute-stx))))
                     #`((#,current-ln) #,execute-stx)))
               )
 
@@ -1762,6 +1857,8 @@
      ;; --- Final Code Assembly ---
      #`(let ()
          #,@var-definitions
+         #,@ignore-state-definitions
+         #,@abstain-state-definitions
          (define output-acc '())
          (define next-stack '())
          (define (next-entry-pc entry)
@@ -1770,7 +1867,6 @@
            (if (pair? entry) (cdr entry) '_))
          (define (next-stack->debug)
            (map next-entry-pc next-stack))
-         (define ignore-tbl (make-hash))
          (define debug? (sick-debug))
          (define debug-vars (sick-debug-vars))
          (define debug-lines (sick-debug-lines))
@@ -1940,49 +2036,16 @@
                (flush-output)))
            (flush-output))
 
-         ;; State tables for the Unified Theory
-         (define source-is-not-tbl (make-hash))
-         (define has-once-tbl (make-hash))
-         (define has-again-tbl (make-hash))
-         (define abstain-tbl (make-hash))
-         (define gerund->lns-map '#,gerund->lns-map)
+         ;; Static state for abstention/ignore.
          (define give-up-line-set '#,give-up-lines)
          (define ln->op-map '#,ln->op-map)
 
-         #,@(filter-map (lambda (l-ln l-is-not)
-                          #`(begin
-                              (hash-set! source-is-not-tbl #,l-ln #,l-is-not)
-                              (hash-set! abstain-tbl #,l-ln (if #,l-is-not 1 0))))
-                        (syntax->list #'(ln ...))
-                        (syntax->list #'(is-not ...)))
-
-         #,@(filter-map (lambda (l-ln l-is-once)
-                          (if (syntax-e l-is-once) #`(hash-set! has-once-tbl #,l-ln #t) #f))
-                        (syntax->list #'(ln ...))
-                        (syntax->list #'(is-once ...)))
-
-         #,@(filter-map (lambda (l-ln l-is-again)
-                          (if (syntax-e l-is-again) #`(hash-set! has-again-tbl #,l-ln #t) #f))
-                        (syntax->list #'(ln ...))
-                        (syntax->list #'(is-again ...)))
-
          ;; The magic state mutator
          (define (update-state! target-ln)
-           (cond
-             [(hash-ref has-once-tbl target-ln #f)
-              (hash-set! abstain-tbl target-ln (if (hash-ref source-is-not-tbl target-ln) 0 1))]
-             [(hash-ref has-again-tbl target-ln #f)
-              (hash-set! abstain-tbl target-ln (if (hash-ref source-is-not-tbl target-ln) 1 0))]))
+           (case target-ln
+             #,@update-state-clauses
+             [else (void)]))
 
-         (define cf-map '#,grouped-come-froms)
-         (define lbl->ln-map '#,(let ([h (make-hash)])
-                                  (for-each (lambda (l-ln l-lbl)
-                                              (let ([v (syntax-e l-lbl)])
-                                                (unless (eq? v '_)
-                                                  (hash-set! h v (syntax-e l-ln)))))
-                                            (syntax->list #'(ln ...))
-                                            (syntax->list #'(lbl ...)))
-                                  h))
          (define rt-ln->lbl-map '#,ln->lbl-map)
 
          (define (resolve-debug-sub-part part)
@@ -2079,20 +2142,27 @@
               (reverse lines)]))
 
          (define (get-ln-for-lbl target-lbl)
-           (hash-ref lbl->ln-map
-                     target-lbl
-                     (lambda () (runtime-fail (ick-err "E129")))))
+           (case target-lbl
+             #,@label->ln-clauses
+             [else (runtime-fail (ick-err "E129"))]))
 
          (define (get-abstain-ln-for-lbl target-lbl)
-           (hash-ref lbl->ln-map
-                     target-lbl
-                     (lambda () (runtime-fail (ick-err "E139")))))
+           (case target-lbl
+             #,@label->ln-clauses
+             [else (runtime-fail (ick-err "E139"))]))
 
          (define (abstain-count target-ln)
-           (hash-ref abstain-tbl target-ln 0))
+           (case target-ln
+             #,@(for/list ([ln (in-list abstain-guard-lines)])
+                  #`[(#,ln) #,(abstain-cell-id ln)])
+             [else 0]))
 
          (define (set-abstain-count! target-ln n)
-           (hash-set! abstain-tbl target-ln (max 0 n)))
+           (define next-val (max 0 n))
+           (case target-ln
+             #,@(for/list ([ln (in-list abstain-guard-lines)])
+                  #`[(#,ln) (set! #,(abstain-cell-id ln) next-val)])
+             [else (void)]))
 
          (define (abstain-line-once! target-ln)
            (unless (member target-ln give-up-line-set)
@@ -2108,26 +2178,13 @@
              (set-abstain-count! target-ln (sub1 (abstain-count target-ln))))
            (trace! 'reinstate (format "line=~a count=~a" target-ln (abstain-count target-ln)) #:line target-ln))
 
-         (define (abstain-gerunds! count gerunds)
-           (for ([gerund (in-list gerunds)])
-             (for ([target-ln (in-list (hash-ref gerund->lns-map gerund '()))])
-               (abstain-line-count! target-ln count))))
-
-         (define (abstain-gerunds-once! gerunds)
-           (for ([gerund (in-list gerunds)])
-             (for ([target-ln (in-list (hash-ref gerund->lns-map gerund '()))])
-               (abstain-line-once! target-ln))))
-
-         (define (reinstate-gerunds! gerunds)
-           (for ([gerund (in-list gerunds)])
-             (for ([target-ln (in-list (hash-ref gerund->lns-map gerund '()))])
-               (reinstate-line-once! target-ln))))
-
          (define (get-actual-next executed-lbl natural-next-ln)
            (if (not (eq? executed-lbl '_))
-               (let ([hijackers (dict-ref cf-map executed-lbl '())])
+               (let ([hijackers (case executed-lbl
+                                  #,@come-from-clauses
+                                  [else '()])])
                  (let ([active-hijackers
-                        (filter (lambda (h-ln) (zero? (hash-ref abstain-tbl h-ln 0))) hijackers)])
+                        (filter (lambda (h-ln) (zero? (abstain-count h-ln))) hijackers)])
                    (if (null? active-hijackers)
                        natural-next-ln
                        (let ([chosen (list-ref active-hijackers (random (length active-hijackers)))])
