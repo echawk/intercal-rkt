@@ -1,4 +1,4 @@
-#lang reader "intercal.rkt"
+#lang reader "../intercal.rkt"
 	DO :321 <- #0
 	DO :322 <- #0
 	DO :123 <- #65535$#65535

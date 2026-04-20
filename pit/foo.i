@@ -1,0 +1,4 @@
+#lang reader "../intercal.rkt"
+PLEASE DO .1 <- #0
+DO READ OUT .1
+DO GIVE UP

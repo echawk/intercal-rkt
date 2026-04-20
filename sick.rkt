@@ -7,7 +7,9 @@
  "ick-lexer.rkt"
  "ick-bnf.rkt"
   (for-syntax roman-numeral)
+ (for-syntax racket/base)
  (for-syntax racket/list)
+ (for-syntax racket/path)
  (for-syntax racket/string)
  (for-syntax "ick-lexer.rkt")
  (for-syntax "ick-bnf.rkt")
@@ -15,6 +17,13 @@
  (for-syntax syntax/parse))
 
 (provide (all-defined-out))
+
+(begin-for-syntax
+  (define sick-transformer-root
+    (let ([src (variable-reference->module-source (#%variable-reference))])
+      (if (path? src)
+          (or (path-only src) (current-directory))
+          (current-directory)))))
 
 (define ick-error-table
   #hash(
@@ -2185,14 +2194,25 @@
          (and (<= lo n hi)
               (not (member n user-defined-labels)))))
 
+     (define (resolve-library-path path)
+       (or (for/first ([candidate (in-list (list path
+                                                 (build-path "pit" path)
+                                                 (build-path sick-transformer-root path)
+                                                 (build-path sick-transformer-root "pit" path)))]
+                       #:when (file-exists? candidate))
+             candidate)
+           path))
+
      (define (load-library-ast path)
+       (define resolved-path
+         (resolve-library-path path))
        (define cleaned-source
-         (clean-intercal-source (file->string path)))
+         (clean-intercal-source (file->string resolved-path)))
        (define parsed-ast
          (with-handlers ([exn:fail?
                           (lambda (e)
                             (error (format "Failed to parse library ~a: ~a"
-                                           path
+                                           resolved-path
                                            (exn-message e))))])
            (parse (tokenize (open-input-string cleaned-source)))))
        (define full-ast
@@ -2205,7 +2225,7 @@
      (define syslib-ast (load-library-ast "syslib.i"))
      (define floatlib-ast
        (if (and (null? user-library-labels)
-                (file-exists? "floatlib.i")
+                (resolve-library-path "floatlib.i")
                 (library-needed? 5000 5999))
            (load-library-ast "floatlib.i")
            '()))

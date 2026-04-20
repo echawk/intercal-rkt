@@ -1,4 +1,4 @@
-#lang reader "intercal.rkt"
+#lang reader "../intercal.rkt"
     DO READ OUT #2
 	DO .10 <- #1
 	PLEASE COME FROM (23)

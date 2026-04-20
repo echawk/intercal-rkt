@@ -1,4 +1,4 @@
-#lang reader "intercal.rkt"
+#lang reader "../intercal.rkt"
 (1)	DO NOTHING
 	PLEASE COME FROM (13) ONCE
 	PLEASE COME FROM #11 ONCE

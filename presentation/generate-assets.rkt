@@ -140,7 +140,7 @@
 
   (write-code-block!
    (build-path generated-dir "hello-snippet.tex")
-   (file-excerpt (build-path repo-dir "hello.i") 1 15)))
+   (file-excerpt (build-path repo-dir "pit" "hello.i") 1 15)))
 
 (module+ main
   (generate!))

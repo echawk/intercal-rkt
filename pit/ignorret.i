@@ -1,4 +1,4 @@
-#lang reader "intercal.rkt"
+#lang reader "../intercal.rkt"
 	DO .1 <- #1
 	DO STASH .1
 	DO .1 <- #2

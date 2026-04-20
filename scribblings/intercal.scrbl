@@ -41,13 +41,13 @@ PLEASE GIVE UP
 and then:
 
 @verbatim|{
-racket hello.i
+racket pit/hello.i
 }|
 
 The repository also includes a number of sample and regression-tested programs,
-including @filepath{fib.i}, @filepath{hanoi.i}, @filepath{hello.i},
-@filepath{beer.i}, @filepath{life.i}, @filepath{rot13.i}, and
-@filepath{unlambda.i}.
+including @filepath{pit/fib.i}, @filepath{pit/hanoi.i}, @filepath{pit/hello.i},
+@filepath{pit/beer.i}, @filepath{pit/life.i}, @filepath{pit/rot13.i}, and
+@filepath{pit/unlambda.i}.
 
 @section{What is implemented}
 
@@ -114,12 +114,12 @@ INTERCAL errors when a value does not fit.
 
 Scalar I/O uses the standard numeric INTERCAL spelling and Roman numeral output.
 Array I/O uses the C-INTERCAL tape encoding, which is necessary for real
-programs such as @filepath{hello.i} and @filepath{unlambda.i}.
+programs such as @filepath{pit/hello.i} and @filepath{pit/unlambda.i}.
 
 @subsection{Libraries}
 
 The macro frontend loads @filepath{syslib.i} automatically and pulls in
-additional libraries such as @filepath{floatlib.i} when label references require
+additional libraries such as @filepath{pit/floatlib.i} when label references require
 them. Library inclusion is based on referenced labels, not on raw numeric
 constants, to avoid spurious loads.
 
@@ -235,8 +235,8 @@ the frontend can prove that a check is unnecessary.
 The repository has two main Racket test files:
 
 @itemlist[
- @item{@filepath{ick-tests.rkt} checks the lexer, grammar, and normalizer.}
- @item{@filepath{sick-test.rkt} checks runtime semantics and macro-generated
+ @item{@filepath{tests/ick-tests.rkt} checks the lexer, grammar, and normalizer.}
+ @item{@filepath{tests/sick-test.rkt} checks runtime semantics and macro-generated
        behavior.}]
 
 The CI workflow also compares the output of several complete programs against

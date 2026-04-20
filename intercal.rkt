@@ -13,7 +13,20 @@
 
 (define clean-intercal-string clean-intercal-source)
 (define current-intercal-language-module-path
-  (make-parameter "intercal.rkt"))
+  (make-parameter #f))
+
+(define intercal-module-source
+  (variable-reference->module-source
+   (#%variable-reference)))
+
+(define (default-language-module-path src)
+  (cond
+    [(path? src)
+     (path->string
+      (find-relative-path
+       (or (path-only src) (current-directory))
+       intercal-module-source))]
+    [else "intercal.rkt"]))
 
 ;; 2. THE READER FUNCTIONS
 (define (intercal-read in)
@@ -28,8 +41,11 @@
 
         ;; Explicitly build the module, using #'module to guarantee
         ;; Racket recognizes it as a core module declaration.
+        (define language-module-path
+          (or (current-intercal-language-module-path)
+              (default-language-module-path src)))
         (datum->syntax #f
-         `(,#'module intercal-mod ,(current-intercal-language-module-path)
+         `(,#'module intercal-mod ,language-module-path
             (provide intercal-main)
             (define (intercal-main)
               (call-with-values (lambda () ,normalized-ast)

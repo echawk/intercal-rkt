@@ -1,4 +1,4 @@
-#lang reader "intercal.rkt"
+#lang reader "../intercal.rkt"
 	PLEASE WRITE IN .10
 	DO .1 <- .10~#65534
 	DO (1020) NEXT

@@ -1,8 +1,8 @@
 #lang racket
 (require rackunit
-         "ick-driver.rkt"
-         "ick-normalize.rkt"
-         "intercal.rkt")
+         "../ick-driver.rkt"
+         "../ick-normalize.rkt"
+         "../intercal.rkt")
 
 (define (parse* s)
   (syntax->datum (parse-intercal s)))
@@ -267,7 +267,7 @@
      (syntax->datum
       (parse-intercal
        (clean-intercal-source
-        (file->string "flonck.i"))))))))
+        (file->string "../pit/flonck.i"))))))))
 
 ;; ;; (test-case "unary binds tighter than SUB"
 ;; ;;   (norm* "10 DO .X <- & .A SUB 1"))

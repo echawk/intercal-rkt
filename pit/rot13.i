@@ -1,4 +1,4 @@
-#lang reader "intercal.rkt"
+#lang reader "../intercal.rkt"
 (10) PLEASE DON'T GIVE UP
 (1) DO .2 <- '?.1$#64'~'#0$#65535'
 DO .2 <- '&"'.1~.2'~'"?'?.2~.2'$#32768"~"#0$#65535"'"$".2~.2"'~#1

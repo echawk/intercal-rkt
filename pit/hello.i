@@ -1,4 +1,4 @@
-#lang reader "intercal.rkt"
+#lang reader "../intercal.rkt"
         DO ,1 <- #13
         PLEASE DO ,1SUB#1 <- #234
         DO ,1SUB#2 <- #112

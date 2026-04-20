@@ -2,7 +2,7 @@
 (require roman-numeral)
 (require rackunit)
 (require racket/system)
-(require "sick.rkt")
+(require "../sick.rkt")
 
 (define (run-racket-file path [stdin ""])
   (define racket-exe
@@ -91,7 +91,7 @@
           (syntax->datum
            (expand
             #`(module sick-expand-test racket
-                (require "sick.rkt")
+                (require "../sick.rkt")
                 #,stx)))))
 
 (test-case "optimized bit operators preserve reference semantics"
@@ -1030,10 +1030,10 @@
   )
 
 
-(require "ick-lexer.rkt")
-(require "ick-bnf.rkt")
-(require "ick-driver.rkt")
-(require "ick-normalize.rkt")
+(require "../ick-lexer.rkt")
+(require "../ick-bnf.rkt")
+(require "../ick-driver.rkt")
+(require "../ick-normalize.rkt")
 ;; (parse
 ;;  (tokenize
 ;;   (open-input-string

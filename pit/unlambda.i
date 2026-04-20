@@ -1,4 +1,4 @@
-#lang reader "intercal.rkt"
+#lang reader "../intercal.rkt"
 	PLEASE NOTE
 
 SPDX-License-Identifier: GPL-2.0-or-later

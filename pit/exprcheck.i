@@ -1,0 +1,5 @@
+DO .8 <- #65532
+DO .5 <- #1
+PLEASE DO .8 <- '?!8$.5'~'#0$#65535'
+DO READ OUT .8
+DO GIVE UP
