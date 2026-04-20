@@ -47,57 +47,57 @@ jobs:
 
       - name: Run fib.i test
         run: |
-          ick -b pit/fib.i && ./fib | awk 'NF' > fib.out.ick
+          ick -b pit/fib.i && ./pit/fib | awk 'NF' > fib.out.ick
           racket pit/fib.i | grep -v '[0-9]' > fib.out.rkt || true
           diff fib.out.ick fib.out.rkt
 
       - name: Run hanoi.i test
         run: |
-          ick -b pit/hanoi.i && echo 'THREE' | ./hanoi | awk 'NF' > hanoi.out.ick
+          ick -b pit/hanoi.i && echo 'THREE' | ./pit/hanoi | awk 'NF' > hanoi.out.ick
           echo 'THREE' | racket pit/hanoi.i | grep -v '[0-9]' > hanoi.out.rkt || true
           diff hanoi.out.ick hanoi.out.rkt
 
       - name: Run onceagain.i test
         run: |
-          ick -b pit/onceagain.i && ./onceagain | awk 'NF' > onceagain.out.ick
+          ick -b pit/onceagain.i && ./pit/onceagain | awk 'NF' > onceagain.out.ick
           racket pit/onceagain.i | grep -v '[0-9]' > onceagain.out.rkt || true
           diff onceagain.out.ick onceagain.out.rkt
 
       - name: Run hello.i test
         run: |
-          ick -b pit/hello.i && ./hello | awk 'NF' > hello.out.ick
+          ick -b pit/hello.i && ./pit/hello | awk 'NF' > hello.out.ick
           racket pit/hello.i | grep -v '^[0-9][0-9]*$' > hello.out.rkt || true
           diff hello.out.ick hello.out.rkt
 
       - name: Run ignorret.i test
         run: |
-          ick -b pit/ignorret.i && ./ignorret | awk 'NF' > ignorret.out.ick
+          ick -b pit/ignorret.i && ./pit/ignorret | awk 'NF' > ignorret.out.ick
           racket pit/ignorret.i | grep -v '^[0-9][0-9]*$' > ignorret.out.rkt || true
           diff ignorret.out.ick ignorret.out.rkt
 
       - name: Run beer.i test
         run: |
-          ick -b pit/beer.i && ./beer > beer.out.ick
+          ick -b pit/beer.i && ./pit/beer > beer.out.ick
           racket pit/beer.i > beer.out.rkt || true
           diff beer.out.ick beer.out.rkt
 
       - name: Run life.i test
         run: |
           printf 'ONE ONE\nONE ONE\nONE OH\nFIVE\nSIX\nSIX\nSIX\nSEVEN\nSIX\nSIX\nSEVEN\nOH\n' > life.in
-          ick -b pit/life.i && ./life < life.in | awk 'NF' > life.out.ick
+          ick -b pit/life.i && ./pit/life < life.in | awk 'NF' > life.out.ick
           racket pit/life.i < life.in | awk 'NF' > life.out.rkt || true
           diff life.out.ick life.out.rkt
 
       - name: Run unlambda.i test
         run: |
           printf '%s\n' '`r```````````.H.e.l.l.o. .w.o.r.l.di' > unlambda.in
-          ick -b pit/unlambda.i && ./unlambda < unlambda.in > unlambda.out.ick
+          ick -b pit/unlambda.i && ./pit/unlambda < unlambda.in > unlambda.out.ick
           racket pit/unlambda.i < unlambda.in > unlambda.out.rkt || true
           diff unlambda.out.ick unlambda.out.rkt
 
       - name: Run rot13.i test
         run: |
           printf 'hello\n' > rot13.in
-          ick -b pit/rot13.i && ./rot13 < rot13.in > rot13.out.ick
+          ick -b pit/rot13.i && ./pit/rot13 < rot13.in > rot13.out.ick
           racket pit/rot13.i < rot13.in > rot13.out.rkt || true
           diff rot13.out.ick rot13.out.rkt
