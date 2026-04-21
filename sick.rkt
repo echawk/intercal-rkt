@@ -492,6 +492,9 @@
      (or (and raw (string->number (string-trim raw)))
          400))))
 
+(define sick-capture-output
+  (make-parameter #t))
+
 (define intercal-clean-token-rx
   #px"\\(|\\)|<-|~|\\$|#|\\+|\\.|:|\\*|,|;|&|\\?|!|%|'|\"|[0-9]+|[A-Za-z][A-Za-z0-9]*")
 
@@ -1364,7 +1367,7 @@
                          (member (substring str 0 1) '("." ":" "*" "," ";")))))
                 (flatten (map syntax->datum ops)))))
 
-     (define grouped-come-froms
+     (define grouped-come-from-map
        (let ([h (make-hash)])
          (for-each (lambda (l-ln l-op)
                      (syntax-parse l-op
@@ -1375,7 +1378,12 @@
                        [_ (void)]))
                    (syntax->list #'(ln ...))
                    ops)
-         (hash-map h cons)))
+         (for/hash ([(k v) (in-hash h)])
+           (values k (reverse v)))))
+
+     (define grouped-come-froms
+       (for/list ([(lbl lns) (in-hash grouped-come-from-map)])
+         (cons lbl lns)))
 
      (define gerund->lns-map
        (let ([h (make-hash)])
@@ -1453,6 +1461,12 @@
                    (syntax->list #'(lbl ...)))
          h))
 
+     (define label->ln-map
+       (for/hash ([l-ln (in-list (syntax->list #'(ln ...)))]
+                  [l-lbl (in-list (syntax->list #'(lbl ...)))]
+                  #:unless (eq? (syntax-e l-lbl) '_))
+         (values (syntax-e l-lbl) (syntax-e l-ln))))
+
      (define label->ln-clauses
        (for/list ([l-ln (in-list (syntax->list #'(ln ...)))]
                   [l-lbl (in-list (syntax->list #'(lbl ...)))]
@@ -1508,6 +1522,77 @@
              [else 0]))
          #`[(#,ln) (set! #,(abstain-cell-id ln) #,next-count)]))
 
+     (define (resolve-label-ln lbl)
+       (hash-ref label->ln-map lbl #f))
+
+     (define (line-can-be-hijacked? lbl)
+       (and (not (eq? lbl '_))
+            (member lbl come-from-guard-labels)))
+
+     (define (hijacker-active-stx ln)
+       (define abstain-id (abstain-cell-id ln))
+       (if abstain-id
+           #`(zero? #,abstain-id)
+           #'#t))
+
+     (define (choose-hijacker-stx executed-lbl-stx ln)
+       #`(begin
+           (trace! 'come-from
+                   (format "label=~a chosen=~a stack=~a"
+                           #,executed-lbl-stx
+                           #,ln
+                           (next-stack->debug))
+                   #:line #,ln)
+           (update-state! #,ln)
+           #,ln))
+
+     (define (specialized-hijack-target-stx executed-lbl-stx natural-next-stx hijackers)
+       (define lns hijackers)
+       (cond
+         [(null? lns) natural-next-stx]
+         [(null? (cdr lns))
+          (define ln (car lns))
+          (if (member ln abstain-guard-lines)
+              #`(if #,(hijacker-active-stx ln)
+                    #,(choose-hijacker-stx executed-lbl-stx ln)
+                    #,natural-next-stx)
+              (choose-hijacker-stx executed-lbl-stx ln))]
+         [(null? (cddr lns))
+          (define ln1 (car lns))
+          (define ln2 (cadr lns))
+          #`(let ([active1? #,(hijacker-active-stx ln1)]
+                  [active2? #,(hijacker-active-stx ln2)])
+              (cond
+                [active1?
+                 (if active2?
+                     (if (zero? (random 2))
+                         #,(choose-hijacker-stx executed-lbl-stx ln1)
+                         #,(choose-hijacker-stx executed-lbl-stx ln2))
+                     #,(choose-hijacker-stx executed-lbl-stx ln1))]
+                [active2? #,(choose-hijacker-stx executed-lbl-stx ln2)]
+                [else #,natural-next-stx]))]
+         [else
+          #`(let ([active-hijackers
+                   (filter values
+                           (list
+                            #,@(for/list ([ln (in-list lns)])
+                                 #`(and #,(hijacker-active-stx ln) #,ln))))])
+              (if (null? active-hijackers)
+                  #,natural-next-stx
+                  (let ([chosen (if (null? (cdr active-hijackers))
+                                    (car active-hijackers)
+                                    (list-ref active-hijackers
+                                              (random (length active-hijackers))))])
+                    (case chosen
+                      #,@(for/list ([ln (in-list lns)])
+                           #`[(#,ln) #,(choose-hijacker-stx executed-lbl-stx ln)])
+                      [else #,natural-next-stx]))))]))
+
+     (define get-actual-next-clauses
+       (for/list ([(lbl lns) (in-hash grouped-come-from-map)])
+         #`[(#,lbl)
+            #,(specialized-hijack-target-stx #'executed-lbl #'natural-next-ln lns)]))
+
      (define case-clauses
        (let loop ([lns (syntax->list #'(ln ...))]
                   [lbls (syntax->list #'(lbl ...))]
@@ -1525,12 +1610,13 @@
             (define is-again-val (syntax-e (car is-agains)))
             (define current-op (flatten-sub-stx (car operations)))
             (define next-ln-val (if (null? (cdr lns)) #f (syntax-e (cadr lns))))
+            (define current-lbl-val (syntax-e current-lbl))
             (define needs-abstain-guard?
               (member (syntax-e current-ln) abstain-guard-lines))
             (define can-be-hijacked?
-              (let ([lbl-val (syntax-e current-lbl)])
-                (and (not (eq? lbl-val '_))
-                     (member lbl-val come-from-guard-labels))))
+              (line-can-be-hijacked? current-lbl-val))
+            (define delayed-come-from-label
+              (and can-be-hijacked? current-lbl-val))
 
             (define compiled-op
               (syntax-parse current-op
@@ -1700,21 +1786,29 @@
                          (cond
                            [(or (vector? v) (intercal-array? v))
                             (write-array-output! v)
-                            (set! output-acc (append (reverse (array-output-list v)) output-acc))]
+                            (when capture-output?
+                              (set! output-acc (append (reverse (array-output-list v)) output-acc)))]
                            [else
                             (displayln
                              (cond ((and (number? v) (zero? v)) "_")
                                    ((number? v) (string-upcase (number->roman v)))
                                    (else "")))
-                            (set! output-acc (cons v output-acc))]))))
+                            (when capture-output?
+                              (set! output-acc (cons v output-acc)))]))))
                  #`(begin #,@read-stxs)]
 
                 [((~datum abstain) (~optional (~datum from)) target)
-                 (let ([t (eval-label-target #'target)])
-                   #`(abstain-line-once! (get-abstain-ln-for-lbl '#,t)))]
+                 (let* ([t (eval-label-target #'target)]
+                        [target-ln (resolve-label-ln t)])
+                   (if target-ln
+                       #`(abstain-line-once! #,target-ln)
+                       #`(runtime-fail (ick-err "E139"))))]
                 [((~datum abstain-count) count target)
-                 (let ([t (eval-label-target #'target)])
-                   #`(abstain-line-count! (get-abstain-ln-for-lbl '#,t) count))]
+                 (let* ([t (eval-label-target #'target)]
+                        [target-ln (resolve-label-ln t)])
+                   (if target-ln
+                       #`(abstain-line-count! #,target-ln count)
+                       #`(runtime-fail (ick-err "E139"))))]
                 [((~datum abstain-gerunds-once) gerund ...)
                  (define target-lns
                    (remove-duplicates
@@ -1730,8 +1824,11 @@
                              (hash-ref gerund->lns-map g '())))))
                  #`(begin #,@(map (lambda (ln) #`(abstain-line-count! #,ln count)) target-lns))]
                 [((~datum reinstate) target)
-                 (let ([t (eval-label-target #'target)])
-                   #`(reinstate-line-once! (get-abstain-ln-for-lbl '#,t)))]
+                 (let* ([t (eval-label-target #'target)]
+                        [target-ln (resolve-label-ln t)])
+                   (if target-ln
+                       #`(reinstate-line-once! #,target-ln)
+                       #`(runtime-fail (ick-err "E139"))))]
                 [((~datum reinstate-gerunds) gerund ...)
                  (define target-lns
                    (remove-duplicates
@@ -1746,12 +1843,12 @@
                 ;; 80-depth NEXT stack limit implemented!
                 [((~datum come-from) target) #`(void)]
                 [((~datum next) target)
-                 #`(if (>= (length next-stack) 80)
+                 #`(if (>= next-top 80)
                        (ick-err "E123")
-                       (set! next-stack
-                             (cons (cons '#,(if next-ln-val next-ln-val #f)
-                                         '#,(syntax-e current-lbl))
-                                   next-stack)))]
+                       (begin
+                         (vector-set! next-pc-stack next-top '#,(if next-ln-val next-ln-val #f))
+                         (vector-set! next-lbl-stack next-top '#,delayed-come-from-label)
+                         (set! next-top (add1 next-top))))]
                 [((~datum resume) var)       #`(void)]
                 [((~datum forget) var)       #`(void)]
                 [((~datum try-again))        #`(void)]
@@ -1761,21 +1858,22 @@
                 [_ #`(void)]))
 
             (define branch
-              (let ([lbl-val (syntax-e current-lbl)]
+              (let ([lbl-val current-lbl-val]
                     [pct-val (syntax-e current-pct)])
                 (define default-next-stx
                   (if can-be-hijacked?
-                      #`(loop (get-actual-next '#,lbl-val '#,next-ln-val))
+                      #`(loop #,(specialized-hijack-target-stx #`'#,lbl-val #`'#,next-ln-val
+                                                              (hash-ref grouped-come-from-map lbl-val '())))
                       #`(loop '#,next-ln-val)))
                 (define natural-next-stx
                   (syntax-parse current-op
-                    [((~datum try-again)) #`(apply values (reverse output-acc))]
-                    [(~datum try-again)   #`(apply values (reverse output-acc))]
+                    [((~datum try-again)) #'(finish-program)]
+                    [(~datum try-again)   #'(finish-program)]
                     [_ default-next-stx]))
                 (define continue-stx
                   (syntax-parse current-op
-                    [((~datum give-up)) #`(apply values (reverse output-acc))]
-                    [(~datum give-up)   #`(apply values (reverse output-acc))]
+                    [((~datum give-up)) #'(finish-program)]
+                    [(~datum give-up)   #'(finish-program)]
                     [((~datum try-again))
                      #`(begin
                          (trace! 'try-again (format "pc=~a -> ~a" #,current-ln #,first-ln) #:line #,current-ln)
@@ -1785,15 +1883,18 @@
                          (trace! 'try-again (format "pc=~a -> ~a" #,current-ln #,first-ln) #:line #,current-ln)
                          (loop #,first-ln))]
                     [((~datum next) target)
-                     (let ([t (eval-label-target #'target)])
+                     (let* ([t (eval-label-target #'target)]
+                            [target-ln (resolve-label-ln t)])
                        #`(begin
                            (trace! 'next (format "pc=~a target=~a stack=~a" #,current-ln '#,t (next-stack->debug)) #:line #,current-ln)
-                           (loop (get-ln-for-lbl '#,t))))]
+                           #,(if target-ln
+                                 #`(loop #,target-ln)
+                                 #`(runtime-fail (ick-err "E129")))))]
                     [((~datum resume) var)
                      #`(let ([count var])
                          (cond
                            [(<= count 0) (runtime-fail (ick-err "E632"))]
-                           [(> count (length next-stack))
+                           [(> count next-top)
                             (trace! 'resume-error
                                     (format "pc=~a count=~a stack=~a"
                                             #,current-ln
@@ -1802,9 +1903,9 @@
                                     #:line #,current-ln)
                             (runtime-fail (ick-err "E632"))]
                            (else
-                            (let* ([target-entry (list-ref next-stack (- count 1))]
-                                   [target-pc (next-entry-pc target-entry)]
-                                   [target-lbl (next-entry-lbl target-entry)])
+                            (let* ([target-index (- next-top count)]
+                                   [target-pc (vector-ref next-pc-stack target-index)]
+                                   [target-lbl (vector-ref next-lbl-stack target-index)])
                               (trace! 'resume
                                       (format "pc=~a count=~a target=~a stack-before=~a"
                                               #,current-ln
@@ -1812,13 +1913,15 @@
                                               target-pc
                                               (next-stack->debug))
                                       #:line #,current-ln)
-                              (set! next-stack (drop next-stack count))
-                              (loop (get-actual-next target-lbl target-pc))))))]
+                              (set! next-top target-index)
+                              (loop (if target-lbl
+                                        (get-actual-next target-lbl target-pc)
+                                        target-pc))))))]
                     [((~datum forget) var)
                      #`(let* ([count var]
-                              [drop-count (max 0 (min count (length next-stack)))])
+                              [drop-count (max 0 (min count next-top))])
                          (trace! 'forget (format "pc=~a count=~a effective=~a stack-before=~a" #,current-ln count drop-count (next-stack->debug)) #:line #,current-ln)
-                         (set! next-stack (drop next-stack drop-count))
+                         (set! next-top (- next-top drop-count))
                          #,default-next-stx)]
                     [_ default-next-stx]))
                 (define execute-stx
@@ -1865,14 +1968,22 @@
          #,@var-definitions
          #,@ignore-state-definitions
          #,@abstain-state-definitions
+         (define capture-output? (sick-capture-output))
          (define output-acc '())
-         (define next-stack '())
-         (define (next-entry-pc entry)
-           (if (pair? entry) (car entry) entry))
-         (define (next-entry-lbl entry)
-           (if (pair? entry) (cdr entry) '_))
+         (define next-pc-stack (make-vector 80 #f))
+         (define next-lbl-stack (make-vector 80 #f))
+         (define next-top 0)
          (define (next-stack->debug)
-           (map next-entry-pc next-stack))
+           (for/list ([i (in-range (sub1 next-top) -1 -1)])
+             (vector-ref next-pc-stack i)))
+         (define (next-stack->signature)
+           (for/list ([i (in-range 0 next-top)])
+             (cons (vector-ref next-pc-stack i)
+                   (vector-ref next-lbl-stack i))))
+         (define (finish-program)
+           (if capture-output?
+               (apply values (reverse output-acc))
+               (values)))
          (define debug? (sick-debug))
          (define debug-vars (sick-debug-vars))
          (define debug-lines (sick-debug-lines))
@@ -1957,7 +2068,7 @@
          (define (repeated-state-break? pc)
            (and break-repeat-target
                 pc
-                (let* ([sig (list pc next-stack)]
+                (let* ([sig (list pc (next-stack->signature))]
                        [hit-count (add1 (hash-ref repeated-state-counts sig 0))])
                   (hash-set! repeated-state-counts sig hit-count)
                   (= hit-count break-repeat-target))))
@@ -2147,16 +2258,6 @@
                   (walk idxs (car idxs) (cadr idxs) 0)))
               (reverse lines)]))
 
-         (define (get-ln-for-lbl target-lbl)
-           (case target-lbl
-             #,@label->ln-clauses
-             [else (runtime-fail (ick-err "E129"))]))
-
-         (define (get-abstain-ln-for-lbl target-lbl)
-           (case target-lbl
-             #,@label->ln-clauses
-             [else (runtime-fail (ick-err "E139"))]))
-
          (define (abstain-count target-ln)
            (case target-ln
              #,@(for/list ([ln (in-list abstain-guard-lines)])
@@ -2185,20 +2286,9 @@
            (trace! 'reinstate (format "line=~a count=~a" target-ln (abstain-count target-ln)) #:line target-ln))
 
          (define (get-actual-next executed-lbl natural-next-ln)
-           (if (not (eq? executed-lbl '_))
-               (let ([hijackers (case executed-lbl
-                                  #,@come-from-clauses
-                                  [else '()])])
-                 (let ([active-hijackers
-                        (filter (lambda (h-ln) (zero? (abstain-count h-ln))) hijackers)])
-                   (if (null? active-hijackers)
-                       natural-next-ln
-                       (let ([chosen (list-ref active-hijackers (random (length active-hijackers)))])
-                         ;; Hijackers count as executed, so they update state too!
-                         (trace! 'come-from (format "label=~a chosen=~a stack=~a" executed-lbl chosen (next-stack->debug)) #:line chosen)
-                         (update-state! chosen)
-                         chosen))))
-               natural-next-ln))
+           (case executed-lbl
+             #,@get-actual-next-clauses
+             [else natural-next-ln]))
 
          (define (run)
            (let loop ([pc #,first-ln])

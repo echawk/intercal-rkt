@@ -48,8 +48,9 @@
          `(,#'module intercal-mod ,language-module-path
             (provide intercal-main)
             (define (intercal-main)
-              (call-with-values (lambda () ,normalized-ast)
-                (lambda ignored (void))))
+              (parameterize ([sick-capture-output #f])
+                (call-with-values (lambda () ,normalized-ast)
+                  (lambda ignored (void)))))
             (module+ main
               (intercal-main)))))
 
