@@ -21,7 +21,7 @@ code that simulates INTERCAL state and control flow.
 
 @section{Using the language}
 
-There are two intended ways to use the implementation:
+There are two intended ways to use this implementation:
 
 @itemlist[
  @item{Inside the repository, source files can use
@@ -60,8 +60,8 @@ as a labeled state machine over mutable variables.
 Each source line has:
 
 @itemlist[
- @item{an optional numeric label such as @tt{(100)},}
- @item{a core operation such as assignment, @tt{NEXT}, or @tt{READ OUT}, and}
+ @item{an optional numeric label such as @tt{(100)}.}
+ @item{a core operation such as assignment, @tt{NEXT}, or @tt{READ OUT}.}
  @item{optional modifiers such as @tt{PLEASE}, @tt{NOT}, @tt{ONCE}, or
        a chance prefix like @tt{%50}.}]
 
@@ -74,22 +74,21 @@ blocks in the Racket sense.
 The frontend accepts the standard INTERCAL variable classes:
 
 @itemlist[
- @item{@tt{.name}: onespot scalar values,}
- @item{@tt{:name}: twospot scalar values,}
- @item{@tt{,name}: onespot arrays,}
- @item{@tt{;name}: twospot arrays, and}
+ @item{@tt{.name}: onespot scalar values.}
+ @item{@tt{:name}: twospot scalar values.}
+ @item{@tt{,name}: onespot arrays.}
+ @item{@tt{;name}: twospot arrays.}
  @item{@tt{*name}: frontend-supported array identifiers that are treated as
        onespot-valued by the runtime.}]
 
-For programmers coming from Racket, the key fact is that values are fixed-width
-machine-style integers rather than arbitrary-precision integers. The runtime
-checks stores:
+Unlike Racket's arbitrary-precision integers, INTERCAL values are fixed-width machine integers. 
+The runtime enforces the following bounds:
 
 @itemlist[
- @item{onespot targets must fit in @tt{0..65535},}
- @item{twospot targets must fit in @tt{0..4294967295}, and}
- @item{storing a twospot-sized value into a onespot target raises the
-       corresponding INTERCAL error instead of silently truncating.}]
+ @item{Onespot (@tt{.}) targets: unsigned 16-bit (@tt{0..65535}).}
+ @item{Twospot (@tt{:}) targets: unsigned 32-bit (@tt{0..4294967295}).}
+ @item{Overflow Protection: Storing a twospot-sized value into a onespot target will not truncate or "wrap around"; 
+      it triggers a runtime INTERCAL error.}]
 
 Arrays are dimensioned with @tt{BY} and indexed with @tt{SUB}. A declaration
 such as
@@ -111,12 +110,12 @@ stores into a particular cell.
 The supported expression language is intentionally small:
 
 @itemlist[
- @item{integer literals like @tt{5},}
- @item{mesh literals like @tt{#5},}
- @item{variables and subscripted array references,}
- @item{@tt{$} for @italic{MINGLE},}
- @item{@tt{~} for @italic{SELECT},}
- @item{unary @tt{&}, @tt{V}, and @tt{?}, and}
+ @item{integer literals like @tt{5}.}
+ @item{mesh literals like @tt{#5}.}
+ @item{variables and subscripted array references.}
+ @item{@tt{$} for @italic{MINGLE}.}
+ @item{@tt{~} for @italic{SELECT}.}
+ @item{unary @tt{&}, @tt{V}, and @tt{?}.}
  @item{single-quote and double-quote grouping.}]
 
 The important semantic point is that these are bit-structured operations, not
@@ -129,7 +128,7 @@ ordinary arithmetic operators:
  @item{@tt{&}, @tt{V}, and @tt{?} combine a value with a one-bit rotation of
        itself.}]
 
-This is why many real INTERCAL programs route ordinary arithmetic through
+That is why this implementation routes ordinary arithmetic through
 @filepath{syslib.i} rather than trying to express everything directly.
 
 @subsection{Control flow}
@@ -178,7 +177,7 @@ This implementation has explicit regression tests for these cases in
 DO FORGET #1
 }|
 
-removes one saved NEXT entry. The implementation follows C-INTERCAL here:
+removes one saved NEXT entry. This implementation follows C-INTERCAL here:
 forgetting more entries than are currently present saturates instead of raising
  an error.
 
@@ -194,9 +193,9 @@ registers line @tt{(500)} as a hijacker for transfers that reach label
 @tt{(100)}. Operationally:
 
 @itemlist[
- @item{the target line still executes,}
- @item{after that line completes, control may be redirected to the matching
-       @tt{COME FROM} line, and}
+ @item{the target line still executes.}
+ @item{after the target line completes, control may be redirected to the matching
+       @tt{COME FROM} line.}
  @item{the runtime keeps explicit label-to-hijacker tables to implement this.}]
 
 In the presence of @tt{NEXT}, the timing matters. This implementation models
@@ -211,9 +210,12 @@ loop reset and @tt{GIVE UP} is the normal program exit.
 
 @subsection{Statement state and self-modification}
 
-INTERCAL has line-level control over whether a statement is currently active.
-This is one of the main reasons the implementation generates explicit runtime
-tables instead of compiling directly to straight-line Racket.
+Unlike Racket’s static execution, INTERCAL permits dynamic, line-level toggling of statement activity. 
+This implementation supports that behavior by generating explicit runtime lookup tables—rather than 
+straight-line Racket code—to verify a statement's status immediately before execution. This centralized 
+state tracking is essential for handling modifiers that disable or enable logic (@tt{ABSTAIN}, @tt{NOT}, @tt{REINSTATE}, @tt{DON’T}), 
+limit execution frequency (@tt{ONCE}, @tt{AGAIN}), or manipulate variable accessibility 
+and history (@tt{IGNORE}, @tt{REMEMBER}, @tt{STASH}, @tt{RETRIEVE}).
 
 @subsubsection{ABSTAIN and REINSTATE}
 
@@ -222,17 +224,17 @@ tables instead of compiling directly to straight-line Racket.
 This implementation supports both styles:
 
 @itemlist[
- @item{targeting a particular labeled line, as in
-       @tt{DO ABSTAIN FROM (100)}, and}
- @item{targeting gerunds, as in
+ @item{Targeting a particular labeled line, as in
+       @tt{DO ABSTAIN FROM (100)}}
+ @item{Targeting gerunds, as in
        @tt{DO ABSTAIN FROM STASHING + RETRIEVING}.}]
 
 The runtime represents abstention with counts, not booleans. That matters
-because multiple abstentions compose:
+because:
 
 @itemlist[
- @item{abstaining twice increments the count twice,}
- @item{the line stays inactive while the count is positive, and}
+ @item{multiple abstentions compose abstaining twice increments the count twice.}
+ @item{the line stays inactive while the count is positive.}
  @item{each reinstatement removes one layer.}]
 
 @subsubsection{NOT, DON'T, ONCE, and AGAIN}
@@ -245,9 +247,9 @@ Postfix @tt{ONCE} and @tt{AGAIN} are local state modifiers on that line:
 
 @itemlist[
  @item{@tt{ONCE} updates the line's abstention state after it is encountered
-       once,}
- @item{@tt{AGAIN} updates that local state on later encounters, and}
- @item{the implementation tracks this with per-line state tables, not with
+       once}
+ @item{@tt{AGAIN} updates that local state on later encounters.}
+ @item{This implementation tracks this with per-line state tables, not with
        source rewriting.}]
 
 The short version is that these modifiers make a line stateful. A line can
@@ -268,7 +270,7 @@ effect.
 @subsubsection{STASH and RETRIEVE}
 
 @tt{STASH} saves variable values on per-variable stacks, and @tt{RETRIEVE}
-restores them. For subscripted array expressions, the implementation stashes
+restores them. For subscripted array expressions, this implementation stashes
 the array object rather than a single indexed element, which matches the way
 INTERCAL uses these commands operationally.
 
@@ -402,24 +404,24 @@ The frontend is split across four files:
 The reader also shares the cleaning logic in @filepath{sick.rkt} to:
 
 @itemlist[
- @item{merge continuation lines,}
- @item{discard prose/commentary lines that are not parseable statements, and}
+ @item{merge continuation lines.}
+ @item{discard prose/commentary lines that are not parseable statements.}
  @item{preserve upstream-style prefixes like @tt{DON'T} and wrapped
        expressions.}]
 
 @subsection{Statements and modifiers}
 
-The implementation supports:
+This implementation supports:
 
 @itemlist[
- @item{assignment, including @tt{BY}-dimensioned arrays,}
- @item{@tt{NEXT}, @tt{RESUME}, @tt{FORGET}, and @tt{COME FROM},}
- @item{@tt{READ OUT} and @tt{WRITE IN},}
- @item{@tt{STASH}, @tt{RETRIEVE}, @tt{IGNORE}, and @tt{REMEMBER},}
- @item{@tt{ABSTAIN} and @tt{REINSTATE}, including gerund lists,}
- @item{@tt{TRY AGAIN}, @tt{GIVE UP}, and @tt{NOTHING},}
+ @item{assignment, including @tt{BY}-dimensioned arrays.}
+ @item{@tt{NEXT}, @tt{RESUME}, @tt{FORGET}, and @tt{COME FROM}.}
+ @item{@tt{READ OUT} and @tt{WRITE IN}.}
+ @item{@tt{STASH}, @tt{RETRIEVE}, @tt{IGNORE}, and @tt{REMEMBER}.}
+ @item{@tt{ABSTAIN} and @tt{REINSTATE}, including gerund lists.}
+ @item{@tt{TRY AGAIN}, @tt{GIVE UP}, and @tt{NOTHING}.}
  @item{prefix modifiers such as @tt{PLEASE}, @tt{DO}, @tt{NOT}, and
-       chance execution, and}
+       chance execution.}
  @item{postfix state modifiers @tt{ONCE} and @tt{AGAIN}.}]
 
 Gerund-based abstention is implemented with counted abstention state, so
@@ -431,11 +433,11 @@ layer at a time.
 The expression language includes:
 
 @itemlist[
- @item{onespot and twospot constants,}
- @item{onespot, twospot, tail, and hybrid variables,}
- @item{@tt{MINGLE}, @tt{SELECT}, and unary binary operators,}
- @item{quote-based grouping,}
- @item{packed and nested @tt{SUB} expressions, and}
+ @item{onespot and twospot constants.}
+ @item{onespot, twospot, tail, and hybrid variables.}
+ @item{@tt{MINGLE}, @tt{SELECT}, and unary binary operators.}
+ @item{quote-based grouping.}
+ @item{packed and nested @tt{SUB} expressions.}
  @item{multidimensional arrays with runtime bounds checking.}]
 
 The runtime enforces onespot/twospot width limits and raises the appropriate
@@ -456,7 +458,7 @@ constants, to avoid spurious loads.
 
 @section{What is missing or incomplete}
 
-The implementation is substantial, but it is not feature-complete. Notable
+This implementation is substantial, but it is not feature-complete. Notable
 gaps are:
 
 @itemlist[
@@ -475,10 +477,10 @@ subscripts/node dumps.
 
 @section{Compilation pipeline}
 
-The implementation strategy is to compile INTERCAL into ordinary Racket by macro
+This implementation strategy is to compile INTERCAL into ordinary Racket by macro
 expansion. The pipeline has five stages.
 
-@subsection{1. Cleaning and reading}
+@subsection{Cleaning and reading}
 
 @filepath{intercal.rkt} reads the source file, applies the shared
 @racket[clean-intercal-source] routine from @filepath{sick.rkt}, tokenizes the
@@ -489,7 +491,7 @@ Racket module whose body invokes the macro backend centered on
 At this point the INTERCAL program is no longer opaque text. It is already a
 structured Racket datum.
 
-@subsection{2. Parse tree normalization}
+@subsection{Parse tree normalization}
 
 @filepath{ick-normalize.rkt} converts the dense brag tree into a compact,
 explicit IR. For example, a line such as:
@@ -507,52 +509,52 @@ normalizes to a form shaped like:
 Normalization performs several important tasks:
 
 @itemlist[
- @item{collapse redundant parse layers,}
- @item{map keywords to symbolic operation names,}
- @item{rewrite packed @tt{SUB} chains into explicit subscript lists,}
- @item{normalize modifiers like @tt{NOT}, @tt{ONCE}, and @tt{AGAIN}, and}
+ @item{collapse redundant parse layers.}
+ @item{map keywords to symbolic operation names.}
+ @item{rewrite packed @tt{SUB} chains into explicit subscript lists.}
+ @item{normalize modifiers like @tt{NOT}, @tt{ONCE}, and @tt{AGAIN}.}
  @item{fix unary precedence so the macro backend sees a stable IR.}]
 
-@subsection{3. Macro compilation}
+@subsection{Macro compilation}
 
 The macros in @filepath{sick.rkt} consume the normalized program. The key
 expansion step is @racket[sick-program-core], which:
 
 @itemlist[
- @item{collects all program variables,}
- @item{builds maps from labels to runtime line numbers,}
+ @item{collects all program variables.}
+ @item{builds maps from labels to runtime line numbers.}
  @item{derives which lines can be abstained, which variables can be ignored,
-       and which labels can be hijacked by @tt{COME FROM},}
- @item{builds gerund-to-line maps for abstention and reinstatement, and}
+       and which labels can be hijacked by @tt{COME FROM}.}
+ @item{builds gerund-to-line maps for abstention and reinstatement.}
  @item{generates one runtime dispatch clause per INTERCAL line.}]
 
 The resulting Racket code is a state machine with explicit tables for abstain
 state, ignore state, line labels, and the NEXT stack.
 
-@subsection{4. Runtime support}
+@subsection{Runtime support}
 
 The runtime portion of @filepath{sick.rkt} implements:
 
 @itemlist[
- @item{INTERCAL error reporting,}
- @item{array storage and bounds checking,}
- @item{bitwise operators and width-sensitive helpers,}
- @item{numeric and tape-style I/O,}
- @item{control-flow support for @tt{NEXT}, @tt{RESUME}, and @tt{COME FROM}, and}
+ @item{INTERCAL error reporting.}
+ @item{array storage and bounds checking.}
+ @item{bitwise operators and width-sensitive helpers.}
+ @item{numeric and tape-style I/O.}
+ @item{control-flow support for @tt{NEXT}, @tt{RESUME}, and @tt{COME FROM}.}
  @item{debugging and tracing hooks.}]
 
 Semantics that are awkward in a direct compiler, such as delayed
 @tt{COME FROM} after a resumed @tt{NEXT} target, are encoded directly in these
 runtime tables and helpers.
 
-@subsection{5. Conservative optimization}
+@subsection{Conservative optimization}
 
-The implementation does some compile-time optimization before handing the result
+This implementation does some compile-time optimization before handing the result
 to the normal Racket compiler. In particular, it removes:
 
 @itemlist[
- @item{abstain checks for lines that provably cannot be abstained,}
- @item{ignore-table lookups for variables that are never ignored, and}
+ @item{abstain checks for lines that provably cannot be abstained.}
+ @item{ignore-table lookups for variables that are never ignored.}
  @item{@tt{COME FROM} dispatch checks for labels that can never be hijacked.}]
 
 It also uses optimized implementations of hot arithmetic operators instead of
@@ -583,11 +585,11 @@ the installed package to expose the reader under the standard
 For publication on the Racket package catalog, the practical checklist is:
 
 @itemlist[
- @item{keep the package metadata in @filepath{info.rkt} up to date,}
- @item{publish the repository at a stable Git URL,}
+ @item{keep the package metadata in @filepath{info.rkt} up to date.}
+ @item{publish the repository at a stable Git URL.}
  @item{list the package on the catalog at
-       @hyperlink["https://pkgs.racket-lang.org/"]{pkgs.racket-lang.org},}
- @item{ensure the Scribble docs build cleanly, and}
+       @hyperlink["https://pkgs.racket-lang.org/"]{pkgs.racket-lang.org}.}
+ @item{ensure the Scribble docs build cleanly.}
  @item{test both local-repository use and installed @tt{#lang intercal} use.}]
 
 Once installed, users should be able to write INTERCAL modules with:
