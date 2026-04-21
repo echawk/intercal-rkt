@@ -364,6 +364,36 @@
   (check-false (regexp-match? #rx"drop next-stack|list-ref next-stack|length next-stack"
                               expanded-source)))
 
+(test-case "non-hijackable fallthrough compiles to direct line tail calls"
+  (define expanded-source
+    (expanded-sick-module-source
+     #'(sick-program
+        (10 (do (assign .X (mesh 'I))))
+        (20 (do (assign .Y .X)))
+        (30 (please (give-up))))))
+  (check-true (regexp-match? #rx"#%app line_[0-9]+" expanded-source))
+  (check-false (string-contains? expanded-source "(#%app dispatch (quote 2))"))
+  (check-false (string-contains? expanded-source "(#%app dispatch (quote 3))")))
+
+(test-case "ANF introduces temporaries for complex per-line expressions"
+  (define expanded-source
+    (expanded-sick-module-source
+     #'(sick-program
+        (10 (do (assign .X (mingle (select .Y (mesh 7)) (unary-xor .Z)))))
+        (20 (please (give-up))))))
+  (check-true (regexp-match? #rx"anf_tmp_" expanded-source)))
+
+(test-case "width-specific store checks are inlined in generated code"
+  (define expanded-source
+    (expanded-sick-module-source
+     #'(sick-program
+        (10 (do (assign .X .Y)))
+        (20 (do (assign (sub *A (mesh 'I)) :Z)))
+        (30 (please (give-up))))))
+  (check-true (regexp-match? #rx"stored-val" expanded-source))
+  (check-false (regexp-match? #rx"checked-store-value|checked-element-store-value"
+                              expanded-source)))
+
 (test-case "abstain optimizer removes guard code from non-abstainable lines"
   (define no-abstain-source
     (expanded-sick-module-source
