@@ -758,41 +758,6 @@
 
 (require (for-syntax racket/base syntax/parse racket/list racket/dict racket/string))
 
-;; MAJOR FIXME: need to restructure the programs to instead have their line
-;; numbers be separate from their labels - I want to make sure that before
-;; I get too far along, we do not box ourselves into a corner.
-
-;; For the come-from logic, we can simply rewrite it to have there be a mapping
-;; from label (whether it be computed or provided) to a line number -> that is
-;; also a more semantically correct option, since this also will allow us to check
-;; if a line number has been abstained or not.
-
-
-;; Also, will need to fix the current issues which arise if you decide to write
-;; (please (do (foo ...))) since it will always cause the program to fail.
-;; I think the *ideal* way to do this would be with a syntax class or something
-;; similar, but I'm somewhat open to whatever is the *correct* solution.
-
-;; Part of me also wants to refactor how lines are actually compiled anyways, since
-;; we have to add a number of checks & whatnot - particularly with regards to
-;; abstaining - I want to work on getting that functionality to be foolproof.
-
-;; I'm OK with the current forget/resume/etc stack stuff, it appears to work fine
-;; for our usecases. I'm sure that there is a more elegant way to do it.
-
-;; I will need to add in "type checks" or maybe just enforcement for our data.
-
-;; while ,A is for arrays, . and : are for 16 & 32 bit unsigned integers only.
-;; Since ',' is a character we cannot directly capture with racket (since it lives
-;; in the reader) we instead use '*' for arrays, which feels more 'C-like' anyways.
-;; (string-ascii? "phỏ")
-;; (string-ascii? "pho")
-;; (string-locale-) (char-downcase #\Ỉ)
-;; ẢA
-
-;; (car (list 'Â))
-
-;; What would be fun is if we instead used some random unicode character instead.
 
 (define-for-syntax (extract-body body pct is-not is-once is-again)
   (match body
@@ -2553,22 +2518,6 @@
 
      ;; 4. COMBINE the ASTs first
      (define combined-ast (append raw-user-ast syslib-ast floatlib-ast))
-
-     ;; ;; 4.5. AST Rewriter: Fix unary operator precedence from the parser
-     ;; ;; Turns `(mingle (unary-xor X) Y)` into `(unary-xor (mingle X Y))`
-     ;; (define (fix-unary-ast ast)
-     ;;   (match ast
-     ;;     [`(mingle (,U ,X) ,Y)
-     ;;      #:when (member U '(unary-and unary-or unary-xor))
-     ;;      `(,U (mingle ,(fix-unary-ast X) ,(fix-unary-ast Y)))]
-     ;;     [`(select (,U ,X) ,Y)
-     ;;      #:when (member U '(unary-and unary-or unary-xor))
-     ;;      `(,U (select ,(fix-unary-ast X) ,(fix-unary-ast Y)))]
-     ;;     [(list elements ...)
-     ;;      (map fix-unary-ast elements)]
-     ;;     [other other]))
-
-     ;; (define fixed-ast (fix-unary-ast combined-ast))
 
      ;; 5. Compile the ENTIRE combined AST into the low-level IR
      (define combined-ir (normalize-sick-prog combined-ast))
