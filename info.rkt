@@ -1,7 +1,7 @@
 #lang setup/infotab
 
 (define collection 'multi)
-(define name "sick")
+(define name "intercal")
 (define version "0.1")
 (define pkg-desc "INTERCAL implemented in Racket with a reader, normalizer, and macro-compiled runtime.")
 (define license 'MIT)
