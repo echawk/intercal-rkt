@@ -1,5 +1,7 @@
-#lang racket
+#lang racket/base
 
-(require "../intercal.rkt")
+;; The installed language entrypoint is `intercal/lang/reader.rkt`.
+;; This module intentionally avoids requiring files outside the collection, so
+;; package dependency checks succeed in an installed layout.
 
-(provide (all-from-out "../intercal.rkt"))
+(provide)

@@ -2,6 +2,7 @@
 
 (provide (except-out (all-from-out racket) read read-syntax)
          (all-from-out "sick.rkt")
+         current-intercal-implementation-module-path
          current-intercal-language-module-path
          (rename-out [intercal-read read]
                      [intercal-read-syntax read-syntax]))
@@ -12,14 +13,16 @@
          "ick-normalize.rkt")
 
 (define clean-intercal-string clean-intercal-source)
-(define current-intercal-language-module-path
+(define current-intercal-implementation-module-path
   (make-parameter #f))
+(define current-intercal-language-module-path
+  current-intercal-implementation-module-path)
 
 (define intercal-module-source
   (variable-reference->module-source
    (#%variable-reference)))
 
-(define (default-language-module-path src)
+(define (default-implementation-module-path src)
   (cond
     [(path? src)
      (path->string
@@ -41,11 +44,12 @@
 
         ;; Explicitly build the module, using #'module to guarantee
         ;; Racket recognizes it as a core module declaration.
-        (define language-module-path
-          (or (current-intercal-language-module-path)
-              (default-language-module-path src)))
+        (define implementation-module-path
+          (or (current-intercal-implementation-module-path)
+              (default-implementation-module-path src)))
         (datum->syntax #f
-         `(,#'module intercal-mod ,language-module-path
+         `(,#'module intercal-mod racket/base
+            (require ,implementation-module-path)
             (provide intercal-main)
             (define (intercal-main)
               (parameterize ([sick-capture-output #f])

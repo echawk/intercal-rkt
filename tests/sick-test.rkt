@@ -2,12 +2,11 @@
 (require roman-numeral)
 (require rackunit)
 (require racket/system)
+(require "../subprocess-utils.rkt")
 (require "../sick.rkt")
 
 (define (run-racket-file path [stdin ""])
-  (define racket-exe
-    (or (find-executable-path "racket")
-        (error "Could not locate racket executable")))
+  (define racket-exe (current-racket-executable))
   (define-values (proc out in err)
     (subprocess #f #f #f racket-exe path))
   (display stdin in)
@@ -20,9 +19,7 @@
   (values (subprocess-status proc) stdout stderr))
 
 (define (run-shell-command cmd)
-  (define shell-exe
-    (or (find-executable-path "sh")
-        (error "Could not locate sh executable")))
+  (define shell-exe (current-shell-executable))
   (define-values (proc out in err)
     (subprocess #f #f #f shell-exe "-lc" cmd))
   (close-output-port in)

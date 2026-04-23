@@ -4,12 +4,18 @@
          racket/file
          racket/runtime-path
          racket/system)
+(require "../subprocess-utils.rkt")
 
 (define-runtime-path unlambda-run-path "../unlambda-run.rkt")
 (define-runtime-path hello-i-path "../pit/hello.i")
 
 (define hello-world-unlambda
   "`r```````````.H.e.l.l.o. .w.o.r.l.di")
+
+(test-case "unlambda-run module loads without running its CLI"
+  (check-not-exn
+   (lambda ()
+     (dynamic-require unlambda-run-path #f))))
 
 (define (run-unlambda-run source [stdin ""])
   (define temp-dir (make-temporary-file "unlambda-run-test~a" 'directory))
@@ -22,8 +28,7 @@
           (display source out))
         #:exists 'truncate)
       (define racket-exe
-        (or (find-executable-path "racket")
-            (error "Could not locate racket executable")))
+        (current-racket-executable))
       (define-values (proc child-out child-in child-err)
         (subprocess #f #f #f racket-exe (path->string unlambda-run-path) (path->string source-path)))
       (display stdin child-in)

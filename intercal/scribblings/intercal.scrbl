@@ -1,10 +1,7 @@
 #lang scribble/manual
 
 @(require scribble/example
-          scribble/racket
-          racket/runtime-path)
-
-@(define-runtime-path repo-root "..")
+          scribble/racket)
 
 @title{INTERCAL in Racket}
 @author{Ethan Hawk and Eva Augur}
@@ -50,7 +47,162 @@ including @filepath{pit/fib.i}, @filepath{pit/hanoi.i}, @filepath{pit/hello.i},
 @filepath{pit/triangular.i}, and @filepath{pit/unlambda.i}.
 
 For a worked example aimed at writing new programs, see
-@filepath{scribblings/programming-intercal.scrbl}.
+@other-doc['(lib "scribblings/programming-intercal.scrbl" "intercal")].
+
+@section{Using the Backend Directly}
+
+Most users should stay at the source-language level and use @tt{#lang intercal}
+or @tt{#lang reader "intercal.rkt"}. The repository also exposes the lower
+level backend used by the reader. That backend is useful for:
+
+@itemlist[
+ @item{frontend and runtime regression tests,}
+ @item{macro-expansion inspection,}
+ @item{debugging semantic mismatches in the evaluator, and}
+ @item{writing small programs directly in the normalized S-expression form.}]
+
+These interfaces live in @filepath{sick.rkt}. They are developer-facing APIs,
+not the main end-user surface of the package, but they are important enough to
+document because the test suite, tutorial material, and debugging workflow all
+use them.
+
+@subsection{Main Entry Points}
+
+@defform[(sick-program line ...)]{
+Compiles a normalized INTERCAL program without automatically appending
+@filepath{syslib.i}.
+
+This is useful when you want a minimal runtime test or when you are already
+working directly in the normalized S-expression form produced by
+@filepath{ick-normalize.rkt}.}
+
+@defform[(sick-program/syslib line ...)]{
+Like @racket[sick-program], but automatically loads @filepath{syslib.i} and any
+additional library files required by referenced labels, such as
+@filepath{pit/floatlib.i}.
+
+This is the form used by the normal source-language frontend, since real
+INTERCAL programs rely on syslib helpers for arithmetic and control support.}
+
+@defform[(sick-program-core line-ir ...)]{
+Consumes the fully lowered IR used internally by the backend.
+
+This form is primarily for compiler debugging. Handwritten programs should
+normally use @racket[sick-program] or @racket[sick-program/syslib] instead.}
+
+@subsection{A Minimal Backend Example}
+
+@racketblock[
+(call-with-values
+ (lambda ()
+   (parameterize ([sick-capture-output #t])
+     (sick-program
+      (10 (do (assign .1 (mesh 1))))
+      (20 (do (read-out .1)))
+      (30 (please (give-up))))))
+ list)
+]
+
+This corresponds to the INTERCAL program:
+
+@verbatim|{
+DO .1 <- #1
+DO READ OUT .1
+PLEASE GIVE UP
+}|
+
+The backend example is useful when you want to isolate runtime semantics
+without involving the lexer and parser.
+
+@subsection{Backend Helpers}
+
+@defproc[(mesh [rn (or/c exact-integer? symbol?)]) exact-integer?]{
+Converts a numeric literal or Roman-numeral symbol into the integer value used
+by the backend IR.
+
+This is mainly useful in handwritten @racket[sick-program] tests, where
+@racket[(mesh 10)] and @racket[(mesh 'X)] both denote the same INTERCAL
+constant.}
+
+@defproc[(clean-intercal-source [str string?]) string?]{
+Normalizes a raw INTERCAL source string into the cleaned source text consumed by
+the lexer and parser.
+
+This step merges continuation lines, keeps only parseable INTERCAL statements,
+and preserves the upstream-style prefix forms accepted by the frontend. It is
+useful when debugging reader behavior independently of runtime semantics.}
+
+@subsection{Useful Runtime Parameters}
+
+The backend exposes several parameters that are especially helpful while
+testing or debugging:
+
+@itemlist[
+ @item{@racket[sick-capture-output]:
+       when true, @tt{READ OUT} accumulates values and returns them as multiple
+       values instead of only printing.}
+ @item{@racket[sick-debug]:
+       enables runtime tracing.}
+ @item{@racket[sick-debug-lines] and @racket[sick-debug-vars]:
+       restrict tracing to specific lines or variables.}
+ @item{@racket[sick-break-lines] and @racket[sick-break-repeat]:
+       stop execution at selected lines or after a repeated control-flow state.}
+ @item{@racket[sick-max-steps]:
+       aborts a run after a bounded number of executed steps.}]
+
+For example:
+
+@racketblock[
+(parameterize ([sick-capture-output #t]
+               [sick-max-steps 1000])
+  (call-with-values
+   (lambda ()
+     (sick-program
+      (10 (do (assign .1 (mesh 1))))
+      (20 (do (read-out .1)))
+     (30 (please (give-up)))))
+   list))
+]
+
+@defparam[sick-capture-output capture? boolean?]{
+Controls whether @tt{READ OUT} accumulates its emitted values and returns them
+as multiple values. The reader disables this for normal @tt{#lang intercal}
+execution so programs print normally without building an in-memory result list.}
+
+@defparam[sick-debug enabled? boolean?]{
+Enables runtime tracing. When true, the evaluator prints control-flow and state
+events to the error port.}
+
+@defparam[sick-debug-lines maybe-lines (or/c #f (listof exact-integer?))]{
+Restricts tracing to selected runtime line numbers.}
+
+@defparam[sick-debug-vars maybe-vars (or/c #f (listof symbol?))]{
+Restricts tracing to selected variables.}
+
+@defparam[sick-break-lines maybe-lines (or/c #f (listof exact-integer?))]{
+Stops execution before selected runtime lines and emits the current debug
+snapshot.}
+
+@defparam[sick-break-repeat maybe-count (or/c #f exact-positive-integer?)]{
+Stops execution when the same control-flow state repeats the configured number
+of times. This is useful for catching tight loops before they produce huge
+traces.}
+
+@defparam[sick-max-steps maybe-limit (or/c #f exact-positive-integer?)]{
+Bounds execution by total runtime steps. This is the safest way to inspect
+intentionally non-terminating programs such as @filepath{pit/primes.i}.}
+
+@subsection{When to Use the Backend}
+
+Use the backend directly when you want to:
+
+@itemlist[
+ @item{write a focused runtime regression test,}
+ @item{inspect the macro-generated Racket code for a small fragment,}
+ @item{test syslib-driven control flow without going through the textual
+       frontend, or}
+ @item{debug a pit program by progressively narrowing the problem to the
+       evaluator.}]
 
 @section{The INTERCAL Model}
 
@@ -575,26 +727,18 @@ The repository has two main Racket test files:
 The CI workflow also compares the output of several complete programs against
 C-INTERCAL's @tt{ick}.
 
-@section{Packaging for @tt{#lang intercal}}
+@section{Installed Usage}
 
-Supporting @tt{#lang intercal} requires a collection-based language entrypoint.
-This repository now includes @filepath{intercal/lang/reader.rkt}, which allows
-the installed package to expose the reader under the standard
-@tt{intercal/lang/reader} module path.
-
-For publication on the Racket package catalog, the practical checklist is:
-
-@itemlist[
- @item{keep the package metadata in @filepath{info.rkt} up to date.}
- @item{publish the repository at a stable Git URL.}
- @item{list the package on the catalog at
-       @hyperlink["https://pkgs.racket-lang.org/"]{pkgs.racket-lang.org}.}
- @item{ensure the Scribble docs build cleanly.}
- @item{test both local-repository use and installed @tt{#lang intercal} use.}]
-
-Once installed, users should be able to write INTERCAL modules with:
+An installed package should allow users to write:
 
 @verbatim|{
 #lang intercal
-...INTERCAL program...
+DO .1 <- #1
+DO READ OUT .1
+PLEASE GIVE UP
 }|
+
+without depending on repository-local relative paths. The collection reader
+lives at @filepath{intercal/lang/reader.rkt}, and the package metadata in
+@filepath{info.rkt} declares the runtime and documentation dependencies needed
+for installed use.
