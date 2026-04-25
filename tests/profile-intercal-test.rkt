@@ -3,14 +3,19 @@
 (require rackunit
          racket/runtime-path
          racket/system)
+(require "../subprocess-utils.rkt")
 
 (define-runtime-path profiler-path "../tools/profile-intercal.rkt")
 (define-runtime-path triangular-i-path "../pit/triangular.i")
 
+(test-case "profile-intercal module loads without running its CLI"
+  (check-not-exn
+   (lambda ()
+     (dynamic-require profiler-path #f))))
+
 (define (run-profiler . args)
   (define racket-exe
-    (or (find-executable-path "racket")
-        (error "Could not locate racket executable")))
+    (current-racket-executable))
   (define-values (proc out in err)
     (apply subprocess
            #f #f #f

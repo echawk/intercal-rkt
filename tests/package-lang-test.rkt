@@ -5,6 +5,7 @@
          racket/runtime-path
          racket/string
          racket/system)
+(require "../subprocess-utils.rkt")
 
 (define-runtime-path repo-dir "..")
 
@@ -25,8 +26,7 @@
           (display source out))
         #:exists 'truncate/replace)
       (define racket-exe
-        (or (find-executable-path "racket")
-            (error "Could not locate racket executable")))
+        (current-racket-executable))
       (define env
         (environment-variables-copy
          (current-environment-variables)))

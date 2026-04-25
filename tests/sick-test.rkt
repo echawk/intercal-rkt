@@ -2,12 +2,11 @@
 (require roman-numeral)
 (require rackunit)
 (require racket/system)
+(require "../subprocess-utils.rkt")
 (require "../sick.rkt")
 
 (define (run-racket-file path [stdin ""])
-  (define racket-exe
-    (or (find-executable-path "racket")
-        (error "Could not locate racket executable")))
+  (define racket-exe (current-racket-executable))
   (define-values (proc out in err)
     (subprocess #f #f #f racket-exe path))
   (display stdin in)
@@ -20,9 +19,7 @@
   (values (subprocess-status proc) stdout stderr))
 
 (define (run-shell-command cmd)
-  (define shell-exe
-    (or (find-executable-path "sh")
-        (error "Could not locate sh executable")))
+  (define shell-exe (current-shell-executable))
   (define-values (proc out in err)
     (subprocess #f #f #f shell-exe "-lc" cmd))
   (close-output-port in)
@@ -332,6 +329,67 @@
         (20 (do (forget .ONE)))
         (30 (please (give-up))))))
   (check-false (string-contains? expanded-source "get-actual-next '_ '3")))
+
+(test-case "NEXT target labels are resolved statically in generated code"
+  (define expanded-source
+    (expanded-sick-module-source
+     #'(sick-program
+        (10 (do (next 30)))
+        (20 (do (read-out (mesh 'I))))
+        (30 (please (give-up))))))
+  (check-false (string-contains? expanded-source "get-ln-for-lbl"))
+  (check-false (string-contains? expanded-source "get-abstain-ln-for-lbl")))
+
+(test-case "single-hijacker fallthrough is inlined instead of calling get-actual-next"
+  (define expanded-source
+    (expanded-sick-module-source
+     #'(sick-program
+        (100 (do (read-out .X)))
+        (do (come-from 100))
+        (please (give-up)))))
+  (check-false (string-contains? expanded-source "get-actual-next '100")))
+
+(test-case "NEXT stack backend uses vectors instead of list primitives"
+  (define expanded-source
+    (expanded-sick-module-source
+     #'(sick-program
+        (10 (do (next 30)))
+        (20 (please (give-up)))
+        (30 (do (resume (mesh 'I)))))))
+  (check-true (string-contains? expanded-source "next-pc-stack"))
+  (check-true (string-contains? expanded-source "next-top"))
+  (check-false (regexp-match? #rx"drop next-stack|list-ref next-stack|length next-stack"
+                              expanded-source)))
+
+(test-case "non-hijackable fallthrough compiles to direct line tail calls"
+  (define expanded-source
+    (expanded-sick-module-source
+     #'(sick-program
+        (10 (do (assign .X (mesh 'I))))
+        (20 (do (assign .Y .X)))
+        (30 (please (give-up))))))
+  (check-true (regexp-match? #rx"#%app line_[0-9]+" expanded-source))
+  (check-false (string-contains? expanded-source "(#%app dispatch (quote 2))"))
+  (check-false (string-contains? expanded-source "(#%app dispatch (quote 3))")))
+
+(test-case "ANF introduces temporaries for complex per-line expressions"
+  (define expanded-source
+    (expanded-sick-module-source
+     #'(sick-program
+        (10 (do (assign .X (mingle (select .Y (mesh 7)) (unary-xor .Z)))))
+        (20 (please (give-up))))))
+  (check-true (regexp-match? #rx"anf_tmp_" expanded-source)))
+
+(test-case "width-specific store checks are inlined in generated code"
+  (define expanded-source
+    (expanded-sick-module-source
+     #'(sick-program
+        (10 (do (assign .X .Y)))
+        (20 (do (assign (sub *A (mesh 'I)) :Z)))
+        (30 (please (give-up))))))
+  (check-true (regexp-match? #rx"stored-val" expanded-source))
+  (check-false (regexp-match? #rx"checked-store-value|checked-element-store-value"
+                              expanded-source)))
 
 (test-case "abstain optimizer removes guard code from non-abstainable lines"
   (define no-abstain-source
@@ -900,6 +958,22 @@
   list)
  (list 1 2)
  "READ OUT list emits all scalar items in order")
+
+(check-equal?
+ (with-output-to-string
+   (thunk
+    (check-equal?
+     (call-with-values
+      (thunk
+       (parameterize ([sick-capture-output #f])
+         (sick-program
+          (do (assign .I (mesh 'I)))
+          (do (read-out .I))
+          (please (give-up)))))
+      list)
+     '())))
+ "I\n"
+ "Disabling output capture preserves output but stops accumulating return values")
 
 
 
