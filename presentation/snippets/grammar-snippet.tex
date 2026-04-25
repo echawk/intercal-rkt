@@ -1,0 +1,19 @@
+\begin{CodeBlock}
+program : line+
+
+line : label? stmt
+     | label
+
+label : LPAREN NUMBER RPAREN
+
+stmt : do-prefix* op do-postfix*
+
+op : assign
+   | next
+   | comefrom
+   | readout
+
+assign : var GETS expr
+next : target NEXT
+comefrom : COME FROM target
+\end{CodeBlock}

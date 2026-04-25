@@ -1,0 +1,15 @@
+\begin{CodeBlock}
+(let ()
+  (define |.1| 0)
+  (define output-acc '())
+  (define next-stack '())
+
+  (define (run)
+    (let loop ([pc 1])
+      (case pc
+        [(1) (set! |.1| (mesh 1)) (loop 2)]
+        [(2) (set! next-stack (cons 3 next-stack))
+             (loop 4)]
+        [(3) (void)]
+        [(4) (resume! (mesh 1) next-stack)]))))
+\end{CodeBlock}

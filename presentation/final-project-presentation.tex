@@ -7,6 +7,7 @@
 
 \usepackage{booktabs}
 \usepackage{fancyvrb}
+\usepackage{fvextra}
 \usepackage{hyperref}
 \usepackage{tabularx}
 
@@ -14,13 +15,18 @@
     fontsize=\tiny,
     frame=single,
     rulecolor=\color{gray},
-    framesep=2mm
+    framesep=2mm,
+    breaklines=true,
+    breakanywhere=true,
+    breaksymbolleft={},
+    breakautoindent=true,
+    breakindent=1em
 }
 
 \title{INTERCAL in Racket}
-\subtitle{Reader, Normalizer, and Macro-Compiled Runtime}
+\subtitle{From INTERCAL Source to Racket State Machines}
 \author{Ethan Hawk \& Eva Augur}
-\date{\today}
+\date{April 27th, 2026}
 
 \begin{document}
 
@@ -31,16 +37,29 @@
 \begin{frame}
   \frametitle{Project Goal}
 
+  \vfill
   \begin{itemize}
     \item Implement a substantial, source-compatible subset of C-INTERCAL in Racket.
     \item Support real programs, not just toy syntax fragments.
     \item Compile INTERCAL into ordinary Racket by macro expansion instead of interpreting an external bytecode.
     \item Preserve difficult semantics: \texttt{COME FROM}, \texttt{NEXT}/\texttt{RESUME}, \texttt{ABSTAIN}, gerunds, and tape I/O.
   \end{itemize}
+  \vfill
+\end{frame}
+
+\begin{frame}[fragile]
+  \frametitle{INTERCAL Control-Flow Semantics}
+
+  \begin{itemize}
+    \item \texttt{NEXT} pushes a return target; \texttt{RESUME} removes one or more entries and jumps to the last removed target.
+    \item \texttt{COME FROM} is resolved after the triggering line executes, with delayed behavior for resumed \texttt{NEXT} entries.
+    \item \texttt{ABSTAIN} and \texttt{REINSTATE} are modeled with counted runtime state so overlapping abstentions compose correctly.
+    \item \texttt{ONCE} and \texttt{AGAIN} mutate line state after execution or skip.
+  \end{itemize}
 
   \vspace{0.2cm}
-  \begin{block}{Current Status}
-    The implementation now runs multiple upstream-style programs including \texttt{pit/fib.i}, \texttt{pit/hanoi.i}, \texttt{pit/hello.i}, \texttt{pit/life.i}, \texttt{pit/beer.i}, \texttt{pit/rot13.i}, and \texttt{pit/unlambda.i} for its hello-world input.
+  \begin{block}{Why this matters}
+    The hard part of INTERCAL is not parsing the keywords. It is compiling bizarre, self-modifying control flow into something predictable enough for Racket to run.
   \end{block}
 \end{frame}
 
@@ -64,24 +83,6 @@
   \end{tabularx}
 \end{frame}
 
-\begin{frame}
-  \frametitle{Missing or Incomplete Features}
-
-  \begin{itemize}
-    \item \texttt{CREATE} is not implemented.
-    \item Multithreading/backtracking features are not implemented.
-    \item PIC-INTERCAL specific functionality is not implemented.
-    \item TriINTERCAL and operand-overloading extensions are not implemented.
-    \item OIL optimizer idiom ingestion is not implemented; only built-in conservative optimizations exist.
-    \item Some upstream pit programs still diverge or misbehave, so compatibility is substantial but not complete.
-  \end{itemize}
-
-  \vspace{0.2cm}
-  \begin{alertblock}{Interpretation of ``done''}
-    The project is no longer just a parser. It is a working language implementation with documented semantic gaps.
-  \end{alertblock}
-\end{frame}
-
 \begin{frame}[fragile]
   \frametitle{Pipeline Overview}
 
@@ -90,161 +91,269 @@
     \item Tokenize and parse INTERCAL into a concrete syntax tree.
     \item Normalize that tree into a strict S-expression IR.
     \item Reader emits a Racket module that calls the backend macro layer.
-    \item Macros expand the IR into explicit Racket state machines.
+    \item Macros add library code, lower the IR into line tuples, analyze it, and emit explicit Racket state machines.
     \item Runtime helpers enforce INTERCAL semantics and produce output.
   \end{enumerate}
 
   \vspace{0.2cm}
   \textbf{Representative source program}
 
-  \input{generated/sample-source.tex}
+  \input{snippets/sample-source.tex}
 \end{frame}
 
-\begin{frame}[fragile]
-  \frametitle{Reader Stage}
+\begin{frame}[fragile,shrink=8]
+  \frametitle{Clean Source and Merge Continuation Lines}
 
   \begin{columns}[T]
-    \begin{column}{0.47\textwidth}
-      \textbf{Reader responsibilities}
-      \begin{itemize}
-        \item Consume raw source text.
-        \item Run shared cleaning logic.
-        \item Parse and normalize.
-        \item Produce a Racket \texttt{module} form.
-      \end{itemize}
-    \end{column}
+    \begin{column}{0.62\textwidth}
+      \textbf{Cleaner}
 
-    \begin{column}{0.50\textwidth}
-      \input{generated/reader-snippet.tex}
+      \input{snippets/cleaner-snippet.tex}
+    \end{column}
+    \begin{column}{0.33\textwidth}
+      \begin{itemize}
+        \item The cleaner keeps only lines that look like INTERCAL statements or valid continuations.
+        \item Indented continuation lines are merged into the current logical line.
+        \item Non-statement prose gets dropped before the grammar ever sees it.
+      \end{itemize}
     \end{column}
   \end{columns}
 \end{frame}
 
-\begin{frame}[fragile]
-  \frametitle{Lexer and Grammar}
+\begin{frame}[fragile,shrink=8]
+  \frametitle{Cleaning Example}
 
   \begin{columns}[T]
     \begin{column}{0.48\textwidth}
-      \input{generated/lexer-snippet.tex}
+      \textbf{Raw input}
+      \input{snippets/sample-raw-source.tex}
     \end{column}
-    \begin{column}{0.47\textwidth}
+    \begin{column}{0.48\textwidth}
+      \textbf{Cleaned logical lines}
+      \input{snippets/sample-cleaned-source.tex}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\begin{frame}[fragile,shrink=5]
+  \frametitle{Tokenize}
+
+  \begin{columns}[T]
+    \begin{column}{0.52\textwidth}
+      \textbf{Lexer}
+
+      \input{snippets/lexer-snippet.tex}
+    \end{column}
+    \begin{column}{0.43\textwidth}
       \begin{itemize}
-        \item Packed \texttt{SUB} forms are expanded before tokenization.
-        \item The grammar keeps source structure explicit: labels, prefixes, postfix modifiers, and operator precedence.
-        \item Arrays and dimensions are parsed uniformly so they can normalize into one IR.
+        \item The lexer turns cleaned source text into tokens the grammar can consume.
+        \item It also expands packed \texttt{SUB} forms before parsing so the grammar sees a regularized token stream.
+        \item Token kinds like numbers, assignment markers, labels, and keywords are made explicit here.
       \end{itemize}
     \end{column}
   \end{columns}
 \end{frame}
 
-\begin{frame}[fragile]
-  \frametitle{Normalization to S-Expressions}
+\begin{frame}[fragile,shrink=8]
+  \frametitle{Tokenization Example}
+
+  \begin{columns}[T]
+    \begin{column}{0.42\textwidth}
+      \textbf{Cleaned source line}
+      \input{snippets/sample-line-source.tex}
+    \end{column}
+    \begin{column}{0.54\textwidth}
+      \textbf{Token stream}
+      \input{snippets/sample-line-tokens.tex}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\begin{frame}[fragile,shrink=5]
+  \frametitle{Parse Tokens into a Concrete Syntax Tree}
+
+  \begin{columns}[T]
+    \begin{column}{0.52\textwidth}
+      \textbf{Grammar Example}
+
+      \input{snippets/grammar-snippet.tex}
+    \end{column}
+    \begin{column}{0.43\textwidth}
+      \begin{itemize}
+        \item The grammar, written with brag, parses those tokens into a concrete syntax tree.
+        \item Arrays and dimensions are parsed uniformly so they can normalize into one IR.
+        \item The tree still reflects source-level structure like labels, prefixes, postfix modifiers, and operator nesting.
+      \end{itemize}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\begin{frame}[fragile,shrink=8]
+  \frametitle{Parsing Example}
+
+  \begin{columns}[T]
+    \begin{column}{0.37\textwidth}
+      \textbf{Token Stream}
+      \input{snippets/sample-line-tokens.tex}
+    \end{column}
+    \begin{column}{0.59\textwidth}
+      \textbf{Partial Concrete syntax tree}
+      \input{snippets/sample-line-parse.tex}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\begin{frame}[fragile,shrink=15]
+  \frametitle{Normalize the CST into IR}
+
+  \begin{columns}[T]
+    \begin{column}{0.56\textwidth}
+      \textbf{Normalizer Excerpt}
+
+      \input{snippets/normalizer-plain-snippet.tex}
+    \end{column}
+    \begin{column}{0.39\textwidth}
+      \begin{itemize}
+        \item Every program has one top-level form: \texttt{sick-program/syslib}.
+        \item Labeled lines become \texttt{(<label> <statement>)} pairs.
+        \item Grammar scaffolding, punctuation, and keyword strings disappear.
+        \item Variables, constants, labels, array subscripts, and dimensions all normalize into fixed arities the macros can match directly.
+      \end{itemize}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\begin{frame}[fragile,shrink=5]
+  \frametitle{Normalization Example}
 
   \begin{columns}[T]
     \begin{column}{0.48\textwidth}
       \textbf{Concrete parse tree}
-      \input{generated/sample-parse.tex}
+      \input{snippets/sample-parse.tex}
     \end{column}
     \begin{column}{0.48\textwidth}
-      \textbf{Normalized IR}
-      \input{generated/sample-normalized.tex}
+      \textbf{Strict S-expression IR}
+      \input{snippets/sample-normalized.tex}
     \end{column}
   \end{columns}
 \end{frame}
 
-\begin{frame}[fragile]
-  \frametitle{Normalizer Implementation}
+\begin{frame}[fragile,shrink=8]
+  \frametitle{Reader Code}
 
   \begin{columns}[T]
-    \begin{column}{0.60\textwidth}
-      \input{generated/normalizer-snippet.tex}
+    \begin{column}{0.62\textwidth}
+      \textbf{Reader}
+      \input{snippets/reader-snippet.tex}
     \end{column}
-    \begin{column}{0.35\textwidth}
+    \begin{column}{0.33\textwidth}
       \begin{itemize}
-        \item Collapse parse scaffolding.
-        \item Rewrite operators into stable symbolic forms.
-        \item Normalize modifiers and control targets.
-        \item Emit one IR understood by the backend.
+        \item The reader wraps the normalized program in an ordinary Racket module.
+        \item The module exports \texttt{intercal-main}; execution enters through the backend macro form, not an interpreter loop.
       \end{itemize}
     \end{column}
   \end{columns}
 \end{frame}
 
-\begin{frame}[fragile]
-  \frametitle{Reader Output Module}
+\begin{frame}[fragile,shrink=8]
+  \frametitle{Reader Output Example}
 
-  \begin{itemize}
-    \item After normalization, the reader does not interpret the program.
-    \item It emits a normal Racket module that exports \texttt{intercal-main}.
-    \item That module body calls the macro-based backend built around \texttt{sick-program}.
-  \end{itemize}
-
-  \input{generated/sample-module.tex}
+  \begin{columns}[T]
+    \begin{column}{0.47\textwidth}
+      \textbf{Normalized IR}
+      \input{snippets/sample-normalized.tex}
+    \end{column}
+    \begin{column}{0.48\textwidth}
+      \textbf{Reader output}
+      \input{snippets/sample-module.tex}
+    \end{column}
+  \end{columns}
 \end{frame}
 
-\begin{frame}[fragile]
-  \frametitle{\texttt{sick-program-core}: Macro Compilation}
-  \scriptsize
+\begin{frame}[fragile,shrink=15]
+  \frametitle{Macro-Lower IR into Racket State Machines}
 
   \begin{columns}[T]
     \begin{column}{0.57\textwidth}
-      \input{generated/macro-snippet.tex}
+      \input{snippets/macro-snippet.tex}
     \end{column}
     \begin{column}{0.38\textwidth}
       \begin{itemize}
-        \item Collect variables from normalized ops.
-        \item Precompute label maps and gerund maps.
-        \item Generate one dispatch clause per runtime line.
-        \item Emit explicit runtime tables for abstain, ignore, and control flow.
+        \item The reader emits \texttt{sick-program/syslib} around the normalized user IR.
+        \item \texttt{sick-program/syslib} adds needed library code and lowers the combined IR into \texttt{sick-program-core} line tuples.
+        \item \texttt{sick-program-core} analyzes variables, abstain targets, ignored variables, \texttt{COME FROM} targets, and gerunds.
+        \item Expansion emits optimized Racket state bindings and dispatch clauses.
       \end{itemize}
     \end{column}
   \end{columns}
 \end{frame}
 
-\begin{frame}[fragile]
-  \frametitle{Expanded Runtime Shape}
+\begin{frame}[fragile,shrink=12]
+  \frametitle{Macro Expansion Example}
 
-  \begin{itemize}
-    \item Expansion makes state explicit: variables, stash stacks, NEXT stack, debug state, and output accumulator all become ordinary Racket bindings.
-    \item This is the project’s compilation technique: compile INTERCAL into a Racket state machine rather than interpret strings at runtime.
-  \end{itemize}
+  \begin{columns}[T]
+    \begin{column}{0.48\textwidth}
+      \textbf{Lowered \texttt{sick-program-core} input}
+      \input{snippets/sample-macro-input.tex}
+    \end{column}
+    \begin{column}{0.48\textwidth}
+      \textbf{Expanded Racket shape}
+      \input{snippets/sample-state-machine-shape.tex}
+    \end{column}
+  \end{columns}
 
-  \input{generated/sample-expanded.tex}
-\end{frame}
-
-\begin{frame}[fragile]
-  \frametitle{Control-Flow Semantics}
-
-  \begin{itemize}
-    \item \texttt{NEXT} pushes a return target; \texttt{RESUME} removes one or more entries and jumps to the last removed target.
-    \item \texttt{COME FROM} is resolved after the triggering line executes, with delayed behavior for resumed \texttt{NEXT} entries.
-    \item \texttt{ABSTAIN} and \texttt{REINSTATE} are modeled with counted runtime state so overlapping abstentions compose correctly.
-    \item \texttt{ONCE} and \texttt{AGAIN} mutate line state after execution or skip.
-  \end{itemize}
-
-  \vspace{0.2cm}
-  \begin{block}{Why this matters}
-    The hard part of INTERCAL is not parsing the keywords. It is compiling bizarre, self-modifying control flow into something predictable enough for Racket to run.
-  \end{block}
-\end{frame}
-
-\begin{frame}[fragile]
-  \frametitle{Conservative Optimizations}
+  \vspace{0.15cm}
   \scriptsize
+  The extra fields are compile-time metadata: runtime line number, source label,
+  politeness, execution percentage, \texttt{NOT}, \texttt{ONCE}, \texttt{AGAIN},
+  and the normalized operation.
+\end{frame}
+
+\begin{frame}[fragile,shrink=8]
+  \frametitle{Runtime Helpers}
 
   \begin{columns}[T]
     \begin{column}{0.58\textwidth}
-      \input{generated/optimizer-snippet.tex}
+      \input{snippets/runtime-snippet.tex}
     \end{column}
     \begin{column}{0.37\textwidth}
       \begin{itemize}
-        \item Remove abstain checks for lines that cannot be abstained.
-        \item Remove ignore-table lookups for variables that are never ignored.
-        \item Remove \texttt{COME FROM} dispatch lookups for labels that cannot be hijacked.
-        \item Use arithmetic/bitwise implementations for hot operators instead of list-based bit manipulation.
+        \item The expanded state machine closes over runtime state such as \texttt{output-acc}, \texttt{next-stack}, abstain counts, and ignore flags.
+        \item Helpers enforce INTERCAL-sized storage, numeric input, tape-style array I/O, and INTERCAL error reporting.
+        \item \texttt{get-actual-next} applies delayed \texttt{COME FROM} control after a line executes.
       \end{itemize}
     \end{column}
   \end{columns}
+\end{frame}
+
+\begin{frame}[fragile,shrink=8]
+  \frametitle{Runtime Execution Example}
+
+  \begin{columns}[T]
+    \begin{column}{0.48\textwidth}
+      \textbf{Program entering runtime}
+      \input{snippets/sample-runtime-source.tex}
+    \end{column}
+    \begin{column}{0.48\textwidth}
+      \textbf{Observed runtime behavior}
+      \input{snippets/sample-runtime-result.tex}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\begin{frame}
+  \frametitle{Missing or Incomplete Features}
+
+  \vfill
+  \begin{itemize}
+    \item \texttt{CREATE} is not implemented.
+    \item Multithreading/backtracking features are not implemented.
+    \item PIC-INTERCAL specific functionality is not implemented.
+    \item TriINTERCAL and operand-overloading extensions are not implemented.
+    \item OIL optimizer idiom ingestion is not implemented; only built-in conservative optimizations exist.
+    \item Some upstream pit programs still diverge or misbehave, so compatibility is substantial but not complete.
+  \end{itemize}
+  \vfill
 \end{frame}
 
 \begin{frame}[fragile]
@@ -267,7 +376,7 @@
     \end{column}
     \begin{column}{0.44\textwidth}
       \textbf{Example program}
-      \input{generated/hello-snippet.tex}
+      \input{snippets/hello-snippet.tex}
     \end{column}
   \end{columns}
 \end{frame}
@@ -277,10 +386,11 @@
 
   \begin{itemize}
     \item We added Scribble documentation for language usage, supported features, semantic gaps, and the compilation pipeline.
-    \item The documentation explains both current local use:
-      \texttt{\#lang reader "intercal.rkt"}
-    \item and the package-oriented goal:
-      \texttt{\#lang intercal}
+    \item The documentation explains both: 
+      \begin{itemize}
+        \item The reader-oriented goal (\texttt{\#lang reader "intercal.rkt"}) 
+        \item The package-oriented goal (\texttt{\#lang intercal})
+      \end{itemize}
     \item The same documentation also serves as the packaging checklist for publishing to the Racket package catalog.
   \end{itemize}
 \end{frame}

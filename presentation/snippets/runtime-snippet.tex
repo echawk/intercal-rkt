@@ -1,0 +1,33 @@
+\begin{CodeBlock}
+(define output-acc '())
+(define next-stack '())
+
+(define (checked-store-value sym val)
+  (if (array-var-name? sym)
+      val
+      (checked-scalar-store-value sym val)))
+
+(define (read-number-input!)
+  (define line (read-line))
+  (when (eof-object? line)
+    (runtime-fail (ick-err "E562")))
+  (string->number
+   (string-join
+    (map number->string
+         (map arabic->number
+              (string-split line)))
+    "")))
+
+(define (get-actual-next executed-lbl natural-next-ln)
+  (define hijackers
+    (if (eq? executed-lbl '_)
+        '()
+        (case executed-lbl ...)))
+  (define active
+    (filter (lambda (h-ln)
+              (zero? (abstain-count h-ln)))
+            hijackers))
+  (if (null? active)
+      natural-next-ln
+      (list-ref active (random (length active)))))
+\end{CodeBlock}

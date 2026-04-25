@@ -1,0 +1,17 @@
+\begin{CodeBlock}
+(define (tokenize in)
+  (define str (port->string in))
+  (define clean-str
+    (string-replace
+     (string-replace str "!" "'.")
+     "DON'T" "DO NOT"))
+  (define words
+    (expand-packed-subscripts
+     (regexp-match* TOKEN-RX clean-str)))
+  (for/list ([w words])
+    (cond
+      [(regexp-match #px"^[0-9]+$" w) (token 'NUMBER (string->number w))]
+      [(equal? w "<-") (token 'GETS w)]
+      [(equal? w "SUB") (token 'SUB w)]
+      [else (token (string->symbol w) w)])))
+\end{CodeBlock}

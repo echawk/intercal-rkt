@@ -1,0 +1,36 @@
+\begin{CodeBlock}
+(define prefix-strs (map cadr prefixes))
+(define postfix-strs (map cadr postfixes))
+
+;; Normalize the core semantic operation
+(define base-op (normalize-op op-node))
+
+;; Apply modifiers in semantic order
+(define is-not
+  (or (member "NOT" prefix-strs)
+      (member "DON'T" prefix-strs)))
+(define with-not
+  (if is-not `(not ,base-op) base-op))
+
+(define is-once (member "ONCE" postfix-strs))
+(define with-once
+  (if is-once `(once ,with-not) with-not))
+
+(define is-again (member "AGAIN" postfix-strs))
+(define with-again
+  (if is-again `(again ,with-once) with-once))
+
+(define prob-prefix
+  (findf (lambda (p)
+           (equal? (cadr p) "%"))
+         prefixes))
+(define with-prob
+  (if prob-prefix
+      `(% ,(caddr prob-prefix) ,with-again)
+      with-again))
+
+;; Wrap in the outermost politeness level
+(if (member "PLEASE" prefix-strs)
+    `(please ,with-prob)
+    `(do ,with-prob))
+\end{CodeBlock}

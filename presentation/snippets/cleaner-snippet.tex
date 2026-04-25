@@ -1,0 +1,29 @@
+\begin{CodeBlock}
+(define (intercal-cleanable-line? line)
+  (or (regexp-match? intercal-valid-start-rx line)
+      (regexp-match? intercal-prefix-start-rx line)
+      (regexp-match? intercal-continuation-rx line)))
+
+(define (merge-intercal-continuations str)
+  (define lines (string-split str "\n"))
+  (define logical-lines '())
+  (define current #f)
+  (define (flush-current!)
+    (when current
+      (set! logical-lines (cons current logical-lines))
+      (set! current #f)))
+  (for ([line (in-list lines)])
+    (cond
+      [(or (regexp-match? intercal-valid-start-rx line)
+           (regexp-match? intercal-prefix-start-rx line))
+       (flush-current!)
+       (set! current line)]
+      [(regexp-match? intercal-continuation-rx line)
+       (when current
+         (define trimmed (string-trim line))
+         (set! current (string-append current " " trimmed)))]
+      [else
+       (flush-current!)]))
+  (flush-current!)
+  (reverse logical-lines))
+\end{CodeBlock}

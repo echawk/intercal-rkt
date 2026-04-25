@@ -1,0 +1,29 @@
+\begin{CodeBlock}
+(define-syntax (sick-program-core stx)
+  (syntax-parse stx
+    [(_ (ln:integer lbl mod pct:integer
+         is-not:boolean is-once:boolean is-again:boolean op) ...)
+     (define ops (syntax->list #'(op ...)))
+
+     (define all-vars
+       (remove-duplicates
+        (filter intercal-var?
+                (flatten (map syntax->datum ops)))))
+
+     (define grouped-come-froms
+       (let ([h (make-hash)])
+         (for-each
+          (lambda (l-ln l-op)
+            (syntax-parse l-op
+              [((~datum come-from) target)
+               (define t (eval-label-target #'target))
+               (hash-set! h t (cons (syntax-e l-ln)
+                                    (hash-ref h t '())))]
+              [_ (void)]))
+          (syntax->list #'(ln ...)) ops)
+         (hash-map h cons)))
+
+     (define gerund->lns-map
+       (build-gerund-map #'(ln ...) ops))
+     ...]))
+\end{CodeBlock}

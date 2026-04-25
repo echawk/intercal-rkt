@@ -1,0 +1,28 @@
+\begin{CodeBlock}
+(program
+ (line
+  (label "(" 10 ")")
+  (stmt
+   (do-prefix "DO")
+   (op
+    (assign
+     (var "." (ident 1))
+     "<-"
+     (expr (mingle (select (unary (postfix (primary "#" 1))))))))))
+ (line
+  (label "(" 20 ")")
+  (stmt
+   (do-prefix "PLEASE")
+   (do-prefix "DO")
+   (op (next (target "(" 40 ")") "NEXT"))))
+ (line (label "(" 30 ")") (stmt (do-prefix "DO") (op (giveup "GIVE" "UP"))))
+ (line
+  (label "(" 40 ")")
+  (stmt
+   (do-prefix "DO")
+   (op
+    (resume
+     "RESUME"
+     (expr (mingle (select (unary (postfix (primary "#" 1)))))))))))
+
+\end{CodeBlock}

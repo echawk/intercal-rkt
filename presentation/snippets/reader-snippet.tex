@@ -1,0 +1,23 @@
+\begin{CodeBlock}
+(define current-intercal-language-module-path
+  (make-parameter #f))
+
+(define intercal-module-source
+  (variable-reference->module-source
+   (#%variable-reference)))
+
+(define (default-language-module-path src)
+  (cond
+    [(path? src)
+     (path->string
+      (find-relative-path
+       (or (path-only src) (current-directory))
+       intercal-module-source))]
+    [else "intercal.rkt"]))
+
+;; 2. THE READER FUNCTIONS
+(define (intercal-read in)
+  (syntax->datum (intercal-read-syntax #f in)))
+
+(define (intercal-read-syntax src in)
+\end{CodeBlock}

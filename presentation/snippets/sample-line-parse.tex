@@ -1,0 +1,12 @@
+\begin{CodeBlock}
+(line
+ (label "(" 10 ")")
+ (stmt
+  (do-prefix "DO")
+  (op
+   (assign
+    (var "." (ident 1))
+    "<-"
+    (expr (mingle (select (unary (postfix (primary "#" 1))))))))))
+
+\end{CodeBlock}
