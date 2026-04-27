@@ -23,10 +23,10 @@
     breakindent=1em
 }
 
-\title{INTERCAL in Racket}
+\title{RKT/ICK - INTERCAL embedded in RACKET}
 \subtitle{From INTERCAL Source to Racket State Machines}
-\author{Ethan Hawk \& Eva Augur}
-\date{April 27th, 2026}
+\author{Scheming Racketeers}
+\date{April 28th, 2026}
 
 \begin{document}
 
@@ -45,22 +45,6 @@
     \item Preserve difficult semantics: \texttt{COME FROM}, \texttt{NEXT}/\texttt{RESUME}, \texttt{ABSTAIN}, gerunds, and tape I/O.
   \end{itemize}
   \vfill
-\end{frame}
-
-\begin{frame}[fragile]
-  \frametitle{INTERCAL Control-Flow Semantics}
-
-  \begin{itemize}
-    \item \texttt{NEXT} pushes a return target; \texttt{RESUME} removes one or more entries and jumps to the last removed target.
-    \item \texttt{COME FROM} is resolved after the triggering line executes, with delayed behavior for resumed \texttt{NEXT} entries.
-    \item \texttt{ABSTAIN} and \texttt{REINSTATE} are modeled with counted runtime state so overlapping abstentions compose correctly.
-    \item \texttt{ONCE} and \texttt{AGAIN} mutate line state after execution or skip.
-  \end{itemize}
-
-  \vspace{0.2cm}
-  \begin{block}{Why this matters}
-    The hard part of INTERCAL is not parsing the keywords. It is compiling bizarre, self-modifying control flow into something predictable enough for Racket to run.
-  \end{block}
 \end{frame}
 
 \begin{frame}
@@ -82,6 +66,24 @@
     \bottomrule
   \end{tabularx}
 \end{frame}
+
+\begin{frame}[fragile]
+  \frametitle{INTERCAL Control-Flow Semantics}
+
+  \begin{itemize}
+    \item \texttt{NEXT} pushes a return target; \texttt{RESUME} removes one or more entries and jumps to the last removed target.
+    \item \texttt{COME FROM} is resolved after the triggering line executes, with delayed behavior for resumed \texttt{NEXT} entries.
+    \item \texttt{ABSTAIN} and \texttt{REINSTATE} are modeled with counted runtime state so overlapping abstentions compose correctly.
+    \item \texttt{ONCE} and \texttt{AGAIN} mutate line state after execution or skip.
+  \end{itemize}
+
+  \vspace{0.2cm}
+  \begin{block}{Why this matters}
+    The hard part of INTERCAL is not parsing the keywords. It is compiling bizarre, self-modifying control flow into something predictable enough for Racket to run.\footnote{This is still an open area of improvement, as the performance of our implementation could be greatly improved.}
+  \end{block}
+\end{frame}
+
+
 
 \begin{frame}[fragile]
   \frametitle{Pipeline Overview}
@@ -346,7 +348,8 @@
 
   \vfill
   \begin{itemize}
-    \item \texttt{CREATE} is not implemented.
+    \item \texttt{CREATE} is not implemented.\footnote{This feature is a known painpoint, and is disabled by default in C-INTERCAL.}
+    \item Runtime Syntax errors.\footnote{Given our compliation pipeline, it is not trivial for us to implement this feature of INTERCAL.}
     \item Multithreading/backtracking features are not implemented.
     \item PIC-INTERCAL specific functionality is not implemented.
     \item TriINTERCAL and operand-overloading extensions are not implemented.
@@ -371,7 +374,7 @@
         \item \texttt{pit/beer.i}
         \item \texttt{pit/life.i}
         \item \texttt{pit/rot13.i}
-        \item \texttt{pit/unlambda.i} (hello-world input)
+        \item \texttt{pit/unlambda.i}
       \end{itemize}
     \end{column}
     \begin{column}{0.44\textwidth}
@@ -386,35 +389,18 @@
 
   \begin{itemize}
     \item We added Scribble documentation for language usage, supported features, semantic gaps, and the compilation pipeline.
-    \item The documentation explains both: 
-      \begin{itemize}
-        \item The reader-oriented goal (\texttt{\#lang reader "intercal.rkt"}) 
-        \item The package-oriented goal (\texttt{\#lang intercal})
-      \end{itemize}
-    \item The same documentation also serves as the packaging checklist for publishing to the Racket package catalog.
+    \item The documentation covers both INTERCAL and our S-expression variant, with any semantic information instead being deferred to Eric Raymonds docs.
+    \item The same documentation is also avaible from Racket's official docs website.
   \end{itemize}
-\end{frame}
-
-\begin{frame}
-  \frametitle{What Is Needed for \texttt{\#lang intercal}?}
-
-  \begin{enumerate}
-    \item Expose a real \texttt{intercal/lang/reader.rkt} collection path.
-    \item Make the package a multi-collection package if it provides both repository-root modules and an \texttt{intercal} collection.
-    \item Add Scribble metadata to \texttt{info.rkt} so the package builds docs cleanly.
-    \item Publish the repository to the package catalog with a stable source URL.
-    \item Keep tests for both local \texttt{\#lang reader} usage and installed \texttt{\#lang intercal} usage.
-  \end{enumerate}
 \end{frame}
 
 \begin{frame}
   \frametitle{Takeaways}
 
   \begin{itemize}
-    \item The project implements an honest compiler pipeline: source text to CST to normalized IR to macro-expanded Racket.
-    \item The main technical contribution is semantic encoding of INTERCAL’s dynamic control flow in ordinary Racket.
+    \item The project implements a straigtforward compiler pipeline: source text $\rightarrow$ CST $\rightarrow$ normalized S-expr IR $\rightarrow$ macro-expanded Racket.
     \item The implementation is now capable of running nontrivial upstream programs, including a language implementation built on top of another esolang implementation.
-    \item The next work is completeness: remaining extensions, more pit coverage, and packaging polish.
+    \item The remaining items, should they be done, are related to completeness: extensions, more example program coverage, and packaging polish.
   \end{itemize}
 \end{frame}
 
