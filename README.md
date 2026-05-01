@@ -18,5 +18,5 @@ raco scribble --htmls +m --dest scribblings \
 
 To view the documentation, open the two generated files:
 
-scribblings/intercal/index.html
-scribblings/programming-intercal/index.html
+- `scribblings/intercal/index.html`
+- `scribblings/programming-intercal/index.html`
